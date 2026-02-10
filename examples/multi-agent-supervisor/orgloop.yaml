@@ -1,0 +1,102 @@
+# orgloop.yaml — Multi-Agent Supervisor
+# Claude Code sessions feed back through a supervisor actor, creating a recursive loop.
+
+apiVersion: orgloop/v1alpha1
+kind: Project
+metadata:
+  name: multi-agent-supervisor
+  description: "Claude Code supervision with feedback loop"
+
+defaults:
+  poll_interval: 5m
+  log_level: info
+
+# ─── Sources ─────────────────────────────────────────────────────────────────
+
+sources:
+  - id: claude-code
+    description: Claude Code session completion events
+    connector: "@orgloop/connector-claude-code"
+    config:
+      hook_type: post-exit
+    emits:
+      - actor.stopped
+
+  - id: github
+    description: GitHub PR activity (work produced by Claude Code)
+    connector: "@orgloop/connector-github"
+    config:
+      repo: "${GITHUB_REPO}"
+      token: "${GITHUB_TOKEN}"
+      events:
+        - "pull_request.review_submitted"
+        - "pull_request_review_comment"
+    poll:
+      interval: 5m
+    emits:
+      - resource.changed
+
+# ─── Actor ───────────────────────────────────────────────────────────────────
+
+actors:
+  - id: supervisor
+    description: Supervisor agent — reviews work, re-dispatches if needed
+    connector: "@orgloop/connector-openclaw"
+    config:
+      base_url: "http://127.0.0.1:18789"
+      auth_token_env: "${OPENCLAW_WEBHOOK_TOKEN}"
+      agent_id: supervisor
+      default_channel: slack
+      default_to: "${OPENCLAW_DEFAULT_TO}"
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
+
+routes:
+  - name: session-review
+    description: "Claude Code session ended -> Supervisor reviews the work"
+    when:
+      source: claude-code
+      events:
+        - actor.stopped
+    then:
+      actor: supervisor
+      config:
+        session_key: "orgloop:claude-code:session-review"
+        wake_mode: now
+    with:
+      prompt_file: "./sops/review-session.md"
+
+  - name: pr-review
+    description: "PR review received -> Supervisor handles feedback"
+    when:
+      source: github
+      events:
+        - resource.changed
+      filter:
+        provenance.platform_event: pull_request.review_submitted
+    then:
+      actor: supervisor
+      config:
+        session_key: "orgloop:github:pr-review"
+        wake_mode: now
+        deliver: true
+    with:
+      prompt_file: "./sops/review-pr.md"
+
+# ─── Loggers ─────────────────────────────────────────────────────────────────
+
+loggers:
+  - name: console-log
+    type: "@orgloop/logger-console"
+    config:
+      level: info
+      color: true
+
+  - name: file-log
+    type: "@orgloop/logger-file"
+    config:
+      path: ~/.orgloop/logs/supervisor.log
+      format: jsonl
+      rotation:
+        max_size: 50MB
+        max_age: 7d

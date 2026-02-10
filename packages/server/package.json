@@ -1,0 +1,23 @@
+{
+  "name": "@orgloop/server",
+  "version": "0.1.0",
+  "description": "OrgLoop HTTP API server",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orgloop/core": "workspace:*",
+    "@orgloop/sdk": "workspace:*"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

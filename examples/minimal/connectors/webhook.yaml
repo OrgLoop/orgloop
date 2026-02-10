@@ -1,0 +1,12 @@
+apiVersion: orgloop/v1alpha1
+kind: ConnectorGroup
+
+sources:
+  - id: webhook
+    description: Generic webhook receiver
+    connector: "@orgloop/connector-webhook"
+    config:
+      path: "/webhook"
+    emits:
+      - resource.changed
+      - message.received

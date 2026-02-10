@@ -1,0 +1,28 @@
+{
+  "name": "@orgloop/connector-linear",
+  "version": "0.1.0",
+  "description": "OrgLoop Linear connector — poll for ticket state changes",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orgloop/sdk": "workspace:*",
+    "@linear/sdk": "^29.0.0"
+  },
+  "orgloop": {
+    "type": "connector",
+    "provides": ["source"],
+    "id": "linear"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Pre-push hook: runs the full CI gate locally before pushing.
+# Install: git config core.hooksPath scripts
+set -euo pipefail
+
+echo "🔒 Pre-push gate: build → test → typecheck → lint"
+echo ""
+
+pnpm build
+pnpm test
+pnpm typecheck
+pnpm lint
+
+echo ""
+echo "✅ All checks passed — pushing."

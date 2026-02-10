@@ -1,0 +1,14 @@
+# Claude Code source — hook-based
+# Claude Code's post-exit hook fires an event to OrgLoop
+
+apiVersion: orgloop/v1alpha1
+kind: ConnectorGroup
+
+sources:
+  - id: claude-code
+    description: Claude Code session completion events
+    connector: "@orgloop/connector-claude-code"
+    config:
+      hook_type: post-exit
+    emits:
+      - actor.stopped

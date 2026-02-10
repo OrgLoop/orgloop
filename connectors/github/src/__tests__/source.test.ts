@@ -1,0 +1,730 @@
+/**
+ * Tests for GitHubSource polling logic.
+ * Mocks Octokit to test all polling methods, pagination, dedup, error handling.
+ */
+
+import { GitHubSource } from '../source.js';
+
+// ─── Mock Octokit ────────────────────────────────────────────────────────────
+
+function createMockOctokit() {
+	const pulls = {
+		list: vi.fn(),
+		listReviews: vi.fn(),
+		listReviewComments: vi.fn(),
+	};
+	const issues = {
+		listCommentsForRepo: vi.fn(),
+	};
+	const actions = {
+		listWorkflowRunsForRepo: vi.fn(),
+	};
+	const checks = {
+		listSuitesForRef: vi.fn(),
+	};
+
+	// paginate calls the endpoint function and returns data directly
+	const paginate = vi.fn(async (endpoint: unknown, params: unknown) => {
+		const fn = endpoint as (...args: unknown[]) => Promise<{ data: unknown }>;
+		const result = await fn(params);
+		// For paginate, return the data array directly (Octokit paginate unwraps)
+		if (Array.isArray(result.data)) {
+			return result.data;
+		}
+		// For endpoints that nest (e.g., workflow_runs), paginate flattens
+		if (
+			result.data &&
+			typeof result.data === 'object' &&
+			'workflow_runs' in (result.data as Record<string, unknown>)
+		) {
+			return (result.data as Record<string, unknown>).workflow_runs;
+		}
+		return result.data;
+	});
+
+	return {
+		pulls,
+		issues,
+		actions,
+		checks,
+		paginate,
+	};
+}
+
+// ─── Test Helpers ────────────────────────────────────────────────────────────
+
+function makePR(overrides: Record<string, unknown> = {}) {
+	return {
+		number: 1,
+		title: 'Test PR',
+		updated_at: '2024-01-15T10:00:00Z',
+		created_at: '2024-01-14T10:00:00Z',
+		closed_at: null,
+		merged: false,
+		draft: false,
+		html_url: 'https://github.com/owner/repo/pull/1',
+		user: { login: 'alice', type: 'User' },
+		head: { ref: 'feature-branch' },
+		base: { ref: 'main' },
+		...overrides,
+	};
+}
+
+function makeReview(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 100,
+		state: 'approved',
+		body: 'LGTM',
+		submitted_at: '2024-01-15T10:00:00Z',
+		html_url: 'https://github.com/owner/repo/pull/1#pullrequestreview-100',
+		user: { login: 'bob', type: 'User' },
+		...overrides,
+	};
+}
+
+function makeReviewComment(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 200,
+		body: 'Needs a fix here',
+		updated_at: '2024-01-15T10:00:00Z',
+		html_url: 'https://github.com/owner/repo/pull/1#discussion_r200',
+		diff_hunk: '@@ -1,3 +1,3 @@',
+		path: 'src/index.ts',
+		user: { login: 'bob', type: 'User' },
+		...overrides,
+	};
+}
+
+function makeIssueComment(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 300,
+		body: 'Thanks for the PR!',
+		updated_at: '2024-01-15T10:00:00Z',
+		html_url: 'https://github.com/owner/repo/issues/1#issuecomment-300',
+		issue_url: 'https://api.github.com/repos/owner/repo/issues/1',
+		user: { login: 'carol', type: 'User' },
+		...overrides,
+	};
+}
+
+function makeWorkflowRun(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 400,
+		name: 'CI',
+		run_number: 42,
+		conclusion: 'failure',
+		status: 'completed',
+		updated_at: '2024-01-15T10:00:00Z',
+		html_url: 'https://github.com/owner/repo/actions/runs/400',
+		head_branch: 'main',
+		head_sha: 'abc123',
+		actor: { login: 'alice', type: 'User' },
+		...overrides,
+	};
+}
+
+function makeCheckSuite(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 500,
+		status: 'completed',
+		conclusion: 'success',
+		updated_at: '2024-01-15T10:00:00Z',
+		url: 'https://api.github.com/repos/owner/repo/check-suites/500',
+		head_branch: 'main',
+		head_sha: 'abc123',
+		before: 'def456',
+		after: 'abc123',
+		app: { slug: 'github-actions', name: 'GitHub Actions' },
+		...overrides,
+	};
+}
+
+// ─── Setup ───────────────────────────────────────────────────────────────────
+
+async function createSource(
+	events: string[],
+	mockOctokit: ReturnType<typeof createMockOctokit>,
+	opts?: { authors?: string[] },
+) {
+	const source = new GitHubSource();
+	// Use init to set up internal state, then override the octokit instance
+	process.env.GITHUB_TOKEN = 'test-token';
+	await source.init({
+		id: 'github-test',
+		connector: 'github',
+		config: {
+			repo: 'owner/repo',
+			events,
+			token: '${GITHUB_TOKEN}',
+			...(opts?.authors ? { authors: opts.authors } : {}),
+		},
+	});
+	// Replace the real octokit with mock
+	(source as unknown as Record<string, unknown>).octokit = mockOctokit;
+	return source;
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+describe('GitHubSource', () => {
+	afterEach(() => {
+		process.env.GITHUB_TOKEN = undefined;
+		vi.restoreAllMocks();
+	});
+
+	describe('init', () => {
+		it('initializes with repo, events, and token', async () => {
+			process.env.GITHUB_TOKEN = 'ghp_test';
+			const source = new GitHubSource();
+			await source.init({
+				id: 'gh',
+				connector: 'github',
+				config: {
+					repo: 'owner/repo',
+					events: ['pull_request.review_submitted'],
+					token: '${GITHUB_TOKEN}',
+				},
+			});
+			expect(source.id).toBe('github');
+		});
+
+		it('throws when env var is not set', async () => {
+			process.env.GITHUB_TOKEN = undefined;
+			const source = new GitHubSource();
+			await expect(
+				source.init({
+					id: 'gh',
+					connector: 'github',
+					config: {
+						repo: 'owner/repo',
+						events: [],
+						token: '${MISSING_VAR}',
+					},
+				}),
+			).rejects.toThrow('Environment variable MISSING_VAR is not set');
+		});
+	});
+
+	describe('pollReviews', () => {
+		it('fetches PRs with pagination and returns review events', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({ number: 1 });
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request.review_submitted');
+			expect(result.events[0].payload.review_state).toBe('approved');
+			expect(result.events[0].provenance.author).toBe('bob');
+			// paginate was called (not direct .list)
+			expect(mock.paginate).toHaveBeenCalled();
+		});
+
+		it('filters out reviews older than checkpoint', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({ number: 1 });
+			const oldReview = makeReview({ submitted_at: '2024-01-14T08:00:00Z' });
+			const newReview = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				id: 101,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [oldReview, newReview] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+		});
+
+		it('handles multiple PRs with reviews', async () => {
+			const mock = createMockOctokit();
+			const pr1 = makePR({ number: 1 });
+			const pr2 = makePR({ number: 2, title: 'PR 2' });
+			const review1 = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+			const review2 = makeReview({
+				submitted_at: '2024-01-15T11:00:00Z',
+				id: 102,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr1, pr2] });
+			mock.pulls.listReviews
+				.mockResolvedValueOnce({ data: [review1] })
+				.mockResolvedValueOnce({ data: [review2] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(2);
+		});
+
+		it('skips individual PR errors without failing', async () => {
+			const mock = createMockOctokit();
+			const pr1 = makePR({ number: 1 });
+			const pr2 = makePR({ number: 2 });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr1, pr2] });
+			mock.pulls.listReviews.mockRejectedValueOnce(new Error('Not found')).mockResolvedValueOnce({
+				data: [makeReview({ submitted_at: '2024-01-15T10:00:00Z' })],
+			});
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+		});
+	});
+
+	describe('pollReviewComments', () => {
+		it('returns review comment events with pagination', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const comment = makeReviewComment();
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviewComments.mockResolvedValue({ data: [comment] });
+
+			const source = await createSource(['pull_request_review_comment'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request_review_comment');
+			expect(result.events[0].payload.comment_body).toBe('Needs a fix here');
+			expect(result.events[0].payload.path).toBe('src/index.ts');
+		});
+	});
+
+	describe('PR dedup — shared pulls.list', () => {
+		it('calls pulls.list only once when both reviews and comments are subscribed', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+			const comment = makeReviewComment();
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mock.pulls.listReviewComments.mockResolvedValue({ data: [comment] });
+
+			const source = await createSource(
+				['pull_request.review_submitted', 'pull_request_review_comment'],
+				mock,
+			);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(2);
+			// pulls.list should have been called only once (via paginate for fetchUpdatedPulls)
+			// The paginate calls for pulls.list specifically:
+			const pullsListCalls = mock.paginate.mock.calls.filter(
+				(call: unknown[]) => call[0] === mock.pulls.list,
+			);
+			expect(pullsListCalls).toHaveLength(1);
+		});
+	});
+
+	describe('pollIssueComments', () => {
+		it('returns issue comment events', async () => {
+			const mock = createMockOctokit();
+			const comment = makeIssueComment();
+
+			mock.issues.listCommentsForRepo.mockResolvedValue({ data: [comment] });
+
+			const source = await createSource(['issue_comment'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('issue_comment');
+			expect(result.events[0].payload.comment_body).toBe('Thanks for the PR!');
+		});
+
+		it('filters out comments older than since', async () => {
+			const mock = createMockOctokit();
+			const oldComment = makeIssueComment({
+				updated_at: '2024-01-14T08:00:00Z',
+			});
+			const newComment = makeIssueComment({
+				updated_at: '2024-01-15T10:00:00Z',
+				id: 301,
+			});
+
+			mock.issues.listCommentsForRepo.mockResolvedValue({
+				data: [oldComment, newComment],
+			});
+
+			const source = await createSource(['issue_comment'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+		});
+	});
+
+	describe('pollClosedPRs', () => {
+		it('returns closed PR events', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({
+				state: 'closed',
+				closed_at: '2024-01-15T10:00:00Z',
+				merged: false,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.closed'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request.closed');
+			expect(result.events[0].payload.action).toBe('closed');
+		});
+
+		it('returns merged PR events', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({
+				state: 'closed',
+				closed_at: '2024-01-15T10:00:00Z',
+				merged: true,
+				merged_by: { login: 'bob' },
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.merged'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request.merged');
+			expect(result.events[0].payload.merged_by).toBe('bob');
+		});
+	});
+
+	describe('pollOpenedPRs (new event)', () => {
+		it('returns opened PR events', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({ created_at: '2024-01-15T10:00:00Z' });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.opened'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request.opened');
+			expect(result.events[0].payload.action).toBe('opened');
+			expect(result.events[0].payload.head_ref).toBe('feature-branch');
+			expect(result.events[0].payload.base_ref).toBe('main');
+		});
+
+		it('filters out PRs created before checkpoint', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({ created_at: '2024-01-14T08:00:00Z' });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.opened'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+		});
+	});
+
+	describe('pollReadyForReviewPRs (new event)', () => {
+		it('returns non-draft PRs updated after checkpoint', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({
+				draft: false,
+				updated_at: '2024-01-15T10:00:00Z',
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.ready_for_review'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('pull_request.ready_for_review');
+			expect(result.events[0].payload.action).toBe('ready_for_review');
+		});
+
+		it('excludes draft PRs', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({
+				draft: true,
+				updated_at: '2024-01-15T10:00:00Z',
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+
+			const source = await createSource(['pull_request.ready_for_review'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+		});
+	});
+
+	describe('pollFailedWorkflowRuns', () => {
+		it('returns failed workflow run events', async () => {
+			const mock = createMockOctokit();
+			const run = makeWorkflowRun();
+
+			mock.actions.listWorkflowRunsForRepo.mockResolvedValue({
+				data: { workflow_runs: [run] },
+			});
+
+			const source = await createSource(['workflow_run.completed'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('workflow_run.completed');
+			expect(result.events[0].payload.conclusion).toBe('failure');
+			expect(result.events[0].payload.workflow_name).toBe('CI');
+		});
+	});
+
+	describe('pollCheckSuites (new event)', () => {
+		it('returns completed check suite events', async () => {
+			const mock = createMockOctokit();
+			const suite = makeCheckSuite();
+
+			mock.checks.listSuitesForRef.mockResolvedValue({
+				data: { check_suites: [suite] },
+			});
+
+			const source = await createSource(['check_suite.completed'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.platform_event).toBe('check_suite.completed');
+			expect(result.events[0].payload.conclusion).toBe('success');
+			expect(result.events[0].payload.app_name).toBe('GitHub Actions');
+			expect(result.events[0].provenance.author_type).toBe('bot');
+		});
+
+		it('excludes non-completed check suites', async () => {
+			const mock = createMockOctokit();
+			const suite = makeCheckSuite({
+				status: 'in_progress',
+				updated_at: '2024-01-15T10:00:00Z',
+			});
+
+			mock.checks.listSuitesForRef.mockResolvedValue({
+				data: { check_suites: [suite] },
+			});
+
+			const source = await createSource(['check_suite.completed'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+		});
+	});
+
+	describe('error handling', () => {
+		it('returns empty events on rate limit (429)', async () => {
+			const mock = createMockOctokit();
+			const error = Object.assign(new Error('rate limited'), { status: 429 });
+
+			mock.pulls.list.mockRejectedValue(error);
+			mock.paginate.mockRejectedValue(error);
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+		});
+
+		it('returns empty events on auth error (401)', async () => {
+			const mock = createMockOctokit();
+			const error = Object.assign(new Error('Bad credentials'), { status: 401 });
+
+			mock.pulls.list.mockRejectedValue(error);
+			mock.paginate.mockRejectedValue(error);
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[github] Auth error'));
+			consoleSpy.mockRestore();
+		});
+
+		it('returns empty events on forbidden (403)', async () => {
+			const mock = createMockOctokit();
+			const error = Object.assign(new Error('Forbidden'), { status: 403 });
+
+			mock.pulls.list.mockRejectedValue(error);
+			mock.paginate.mockRejectedValue(error);
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(0);
+			consoleSpy.mockRestore();
+		});
+
+		it('rethrows non-HTTP errors', async () => {
+			const mock = createMockOctokit();
+			const error = new Error('Network failure');
+
+			mock.pulls.list.mockRejectedValue(error);
+			mock.paginate.mockRejectedValue(error);
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			await expect(source.poll('2024-01-15T09:00:00Z')).rejects.toThrow('Network failure');
+		});
+	});
+
+	describe('author filtering', () => {
+		it('filters events by author when authors config is set', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const reviewByAlice = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				user: { login: 'alice', type: 'User' },
+			});
+			const reviewByBob = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				user: { login: 'bob', type: 'User' },
+				id: 101,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({
+				data: [reviewByAlice, reviewByBob],
+			});
+
+			const source = await createSource(['pull_request.review_submitted'], mock, {
+				authors: ['bob'],
+			});
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.author).toBe('bob');
+		});
+
+		it('returns all events when no authors filter', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const review1 = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				user: { login: 'alice', type: 'User' },
+			});
+			const review2 = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				user: { login: 'bob', type: 'User' },
+				id: 101,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review1, review2] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(2);
+		});
+	});
+
+	describe('checkpoint advancement', () => {
+		it('advances checkpoint to latest event timestamp', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const review1 = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+			const review2 = makeReview({
+				submitted_at: '2024-01-15T12:00:00Z',
+				id: 101,
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review1, review2] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			// Checkpoint should be the latest event's timestamp
+			expect(result.checkpoint > '2024-01-15T09:00:00Z').toBe(true);
+		});
+
+		it('returns epoch checkpoint when no prior checkpoint and no events', async () => {
+			const mock = createMockOctokit();
+			mock.pulls.list.mockResolvedValue({ data: [] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll(null);
+
+			expect(result.events).toHaveLength(0);
+			expect(result.checkpoint).toBe('1970-01-01T00:00:00.000Z');
+		});
+	});
+
+	describe('null checkpoint (first poll)', () => {
+		it('returns all events when no checkpoint exists', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll(null);
+
+			expect(result.events).toHaveLength(1);
+		});
+	});
+
+	describe('bot detection', () => {
+		it('detects bot authors by [bot] suffix', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const botReview = makeReview({
+				submitted_at: '2024-01-15T10:00:00Z',
+				user: { login: 'dependabot[bot]', type: 'Bot' },
+			});
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [botReview] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(1);
+			expect(result.events[0].provenance.author_type).toBe('bot');
+		});
+	});
+
+	describe('event structure', () => {
+		it('produces well-formed OrgLoop events', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR();
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+
+			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+
+			const source = await createSource(['pull_request.review_submitted'], mock);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			const event = result.events[0];
+			expect(event.id).toMatch(/^evt_/);
+			expect(event.type).toBe('resource.changed');
+			expect(event.source).toBe('github-test');
+			expect(event.timestamp).toBeDefined();
+			expect(event.trace_id).toMatch(/^trc_/);
+			expect(event.provenance.platform).toBe('github');
+			expect(event.provenance.repo).toBe('owner/repo');
+		});
+	});
+
+	describe('shutdown', () => {
+		it('completes without error', async () => {
+			const source = new GitHubSource();
+			await expect(source.shutdown()).resolves.toBeUndefined();
+		});
+	});
+});

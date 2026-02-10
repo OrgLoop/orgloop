@@ -1,0 +1,9 @@
+apiVersion: orgloop/v1alpha1
+kind: LoggerGroup
+
+loggers:
+  - name: console-log
+    type: "@orgloop/logger-console"
+    config:
+      level: info
+      color: true

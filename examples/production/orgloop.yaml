@@ -1,0 +1,24 @@
+# orgloop.yaml — Production org spec
+
+apiVersion: orgloop/v1alpha1
+kind: Project
+metadata:
+  name: engineering-org
+  description: "Engineering organization event routing — replaces bespoke scripts"
+
+defaults:
+  poll_interval: 5m
+  event_retention: 7d
+  log_level: info
+
+connectors:
+  - connectors/github.yaml
+  - connectors/linear.yaml
+  - connectors/claude-code.yaml
+  - connectors/openclaw.yaml
+
+transforms:
+  - transforms/transforms.yaml
+
+loggers:
+  - loggers/default.yaml

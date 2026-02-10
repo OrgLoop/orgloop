@@ -1,0 +1,13 @@
+# Claude Code source — session completion events via post-exit hook
+
+apiVersion: orgloop/v1alpha1
+kind: ConnectorGroup
+
+sources:
+  - id: claude-code
+    description: Claude Code session completion events
+    connector: "@orgloop/connector-claude-code"
+    config:
+      hook_type: post-exit
+    emits:
+      - actor.stopped

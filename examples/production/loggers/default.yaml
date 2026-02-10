@@ -1,0 +1,23 @@
+# Default loggers — file for audit, console for development
+
+apiVersion: orgloop/v1alpha1
+kind: LoggerGroup
+metadata:
+  name: default-loggers
+
+loggers:
+  - name: file-log
+    type: "@orgloop/logger-file"
+    config:
+      path: ~/.orgloop/logs/orgloop.log
+      format: jsonl
+      rotation:
+        max_size: 100MB
+        max_age: 7d
+        compress: true
+
+  - name: console-log
+    type: "@orgloop/logger-console"
+    config:
+      level: info
+      color: true

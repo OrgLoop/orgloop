@@ -1,0 +1,24 @@
+# Transforms — filter and deduplication pipeline
+
+apiVersion: orgloop/v1alpha1
+kind: TransformGroup
+
+transforms:
+  - name: drop-bot-noise
+    type: package
+    package: "@orgloop/transform-filter"
+    config:
+      exclude:
+        provenance.author_type: bot
+
+  - name: dedup
+    type: package
+    package: "@orgloop/transform-dedup"
+    config:
+      key:
+        - source
+        - type
+        - provenance.platform_event
+        - payload.pr_number
+      window: 5m
+      store: memory
