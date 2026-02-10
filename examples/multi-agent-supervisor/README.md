@@ -2,11 +2,21 @@
 
 Demonstrates the feedback loop pattern: Claude Code sessions emit `actor.stopped` events, which route to a supervisor actor that reviews work and can re-dispatch tasks.
 
+> **New to OrgLoop?** Start with the [Minimal](../minimal/) example first -- no accounts or tokens required.
+
+## Prerequisites
+
+- Node.js >= 22
+- OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- A [GitHub](https://github.com) account with a repository to monitor
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed locally
+- An [OpenClaw](https://openclaw.ai) instance running locally
+
 ## What it does
 
-- **Claude Code** connector receives session exit events via webhook hook
+- **Claude Code** connector receives session exit events via post-exit hook
 - **GitHub** connector polls for PR activity (the work Claude Code produces)
-- A **supervisor** actor receives both streams and decides what to do next
+- A **supervisor** actor (via [OpenClaw](https://openclaw.ai)) receives both streams and decides what to do next
 - The supervisor's own sessions feed back as `actor.stopped` events, creating the recursive loop
 
 This is OrgLoop's core insight in action: actors complete sessions, the system observes the completion, and routes it to the next actor in the chain.
@@ -33,12 +43,12 @@ Claude Code session ends
 
 ### 1. Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `GITHUB_REPO` | Repository being worked on (`owner/repo`) |
-| `GITHUB_TOKEN` | GitHub PAT with repo read access |
-| `OPENCLAW_WEBHOOK_TOKEN` | Bearer token for OpenClaw API |
-| `OPENCLAW_DEFAULT_TO` | Default message recipient |
+| Variable | Description | Where to get it |
+|----------|-------------|-----------------|
+| `GITHUB_REPO` | Repository being worked on (`owner/repo`) | Your GitHub repo URL |
+| `GITHUB_TOKEN` | GitHub PAT with `repo` read access | [GitHub Settings > Tokens](https://github.com/settings/tokens) |
+| `OPENCLAW_WEBHOOK_TOKEN` | Bearer token for OpenClaw API | Your [OpenClaw](https://openclaw.ai) instance |
+| `OPENCLAW_DEFAULT_TO` | Default message recipient | Your OpenClaw team configuration |
 
 ### 2. Install Claude Code hook
 

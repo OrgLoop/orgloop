@@ -52,39 +52,47 @@ Here's what my minimum viable autonomous engineering org looks like:
 
 sources:
   - id: github
-    connector: github
-    config: { repo: "my-org/my-repo", poll_interval: 5m }
+    connector: "@orgloop/connector-github"
+    config:
+      repo: "${GITHUB_REPO}"
+      token: "${GITHUB_TOKEN}"
+    poll: { interval: 5m }
 
   - id: linear
-    connector: linear
-    config: { team: engineering }
+    connector: "@orgloop/connector-linear"
+    config:
+      team: "${LINEAR_TEAM_KEY}"
+      api_key: "${LINEAR_API_KEY}"
+    poll: { interval: 5m }
 
   - id: claude-code
-    connector: claude-code
+    connector: "@orgloop/connector-claude-code"
+    config: { hook_type: post-exit }
 
 actors:
   - id: engineering
-    connector: openclaw
-    config: { agent: engineering, session: isolated }
+    connector: "@orgloop/connector-openclaw"
+    config:
+      auth_token_env: "${OPENCLAW_WEBHOOK_TOKEN}"
 
 routes:
   - name: "PR review -> Engineering"
-    when: { source: github, event: resource.changed }
+    when: { source: github, events: [resource.changed] }
     transforms: [drop-bot-noise, injection-scanner]
     then: { actor: engineering }
     with: { prompt_file: "./sops/pr-review.md" }
 
   - name: "CI failure -> Engineering"
-    when: { source: github, event: resource.changed }
+    when: { source: github, events: [resource.changed] }
     then: { actor: engineering }
     with: { prompt_file: "./sops/ci-failure.md" }
 
   - name: "Dev session done -> Supervisor"
-    when: { source: claude-code, event: actor.stopped }
+    when: { source: claude-code, events: [actor.stopped] }
     then: { actor: engineering }
 
   - name: "Ticket moved -> Engineering"
-    when: { source: linear, event: resource.changed }
+    when: { source: linear, events: [resource.changed] }
     then: { actor: engineering }
     with: { prompt_file: "./sops/linear-ticket.md" }
 ```
@@ -110,18 +118,18 @@ And here's what makes it click: **the org loops.** 🧬 When an actor finishes w
 
 sources:
   - id: claude-code
-    connector: claude-code        # Emits actor.stopped when a session ends
+    connector: "@orgloop/connector-claude-code"
+    config: { hook_type: post-exit }    # Emits actor.stopped when a session ends
 
 actors:
   - id: supervisor
-    connector: openclaw
-  - id: dev-agent
-    connector: claude-code
+    connector: "@orgloop/connector-openclaw"
+    config: { auth_token_env: "${OPENCLAW_WEBHOOK_TOKEN}" }
 
 routes:
   # Step 1: Dev agent finishes -> supervisor wakes to evaluate
   - name: "Dev done -> Supervisor"
-    when: { source: claude-code, event: actor.stopped }
+    when: { source: claude-code, events: [actor.stopped] }
     then: { actor: supervisor }
     with: { prompt_file: "./sops/evaluate-dev-output.md" }
 
@@ -175,17 +183,17 @@ Infrastructure as Code didn't just make servers easier to manage. It created an 
 
 ```yaml
 # HR: New hire in Workday -> onboarding agent drafts welcome email + provisions accounts
-- when: { source: workday, event: resource.changed }
+- when: { source: workday, events: [resource.changed] }
   then: { actor: onboarding-agent }
   with: { prompt_file: "./sops/new-hire-onboarding.md" }
 
 # Sales: Deal stage changed in Salesforce -> sales ops agent updates forecast + alerts AE
-- when: { source: salesforce, event: resource.changed }
+- when: { source: salesforce, events: [resource.changed] }
   then: { actor: sales-ops-agent }
   with: { prompt_file: "./sops/deal-stage-change.md" }
 
 # Support: P1 ticket opened in Zendesk -> triage agent pulls logs + drafts response
-- when: { source: zendesk, event: resource.changed }
+- when: { source: zendesk, events: [resource.changed] }
   then: { actor: support-triage }
   with: { prompt_file: "./sops/p1-triage.md" }
 ```

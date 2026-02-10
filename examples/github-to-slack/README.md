@@ -7,7 +7,14 @@ Single GitHub source, single Slack webhook actor, one route. The simplest real-w
 - Polls a GitHub repository for PR reviews and comments
 - Sends notifications to a Slack channel via incoming webhook
 
-## Setup (2 minutes)
+## Prerequisites
+
+- Node.js >= 22
+- OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- A [GitHub personal access token](https://github.com/settings/tokens) with `repo` read access
+- A [Slack incoming webhook URL](https://api.slack.com/messaging/webhooks)
+
+## Setup (~5 minutes)
 
 ### 1. Get your tokens
 

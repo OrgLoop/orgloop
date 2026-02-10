@@ -3,7 +3,13 @@ title: "Example: GitHub to Slack"
 description: Single source, single actor — GitHub PR events to Slack notifications.
 ---
 
-The simplest real-world OrgLoop setup: one GitHub source, one Slack webhook actor, one route. Two minutes from clone to running.
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="note" title="Prerequisites: 2 tokens">
+This example requires a **GitHub personal access token** and a **Slack incoming webhook URL**. If you do not have these yet, see the setup instructions below -- each takes about 1 minute to create.
+</Aside>
+
+The simplest real-world OrgLoop setup: one GitHub source, one Slack webhook actor, one route. About 5 minutes from clone to running (including token setup).
 
 ## What this example shows
 
@@ -19,7 +25,7 @@ The simplest real-world OrgLoop setup: one GitHub source, one Slack webhook acto
 - A GitHub personal access token with `repo` read access
 - A Slack incoming webhook URL
 
-## Setup (2 minutes)
+## Setup (~5 minutes)
 
 ### 1. Get your tokens
 

@@ -9,6 +9,27 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 [Get Started](/start/getting-started/) | [View on GitHub](https://github.com/c-h-/orgloop)
 
+## Try It Now
+
+Set up a webhook source and a console logger, route an event between them.
+
+```bash
+npm install -g @orgloop/cli
+orgloop init    # select "webhook" when prompted for connectors
+cd my-org && orgloop add module minimal
+orgloop validate && orgloop apply
+```
+
+In another terminal:
+
+```bash
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"type": "test", "message": "hello from orgloop"}'
+```
+
+You just routed an event through OrgLoop. The [Getting Started guide](/start/getting-started/) walks you through connecting GitHub, Linear, and a full autonomous engineering org -- one tier at a time.
+
 ## Why OrgLoop
 
 You're running AI agents. Each one is genuinely capable. And yet you're still the glue.
@@ -45,23 +66,9 @@ When an actor finishes work, that completion is itself an event -- routed back i
 	</Card>
 </CardGrid>
 
-## Quick Demo
+## What It Grows Into
 
-```bash
-# Scaffold a project with connectors
-orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive
-
-# Install a pre-built workflow module
-orgloop add module engineering
-
-# Check environment variables
-orgloop env
-
-# Start the engine
-orgloop apply
-```
-
-Once running, `orgloop status` shows your organization in action:
+Connect real systems and `orgloop status` shows your organization in action:
 
 ```
 OrgLoop — my-org (running, uptime 3h 22m)
@@ -117,6 +124,17 @@ routes:
 
 Read that and you see an organization's nervous system. Every event that matters, where it goes, what responds. If there's a gap -- a lifecycle event with no route -- it's visible.
 
+## Examples
+
+Each example is a self-contained project you can copy and run. They're ordered by complexity:
+
+| Example | What you need | What you get |
+|---------|--------------|--------------|
+| [**Minimal**](/examples/minimal/) | Nothing | Webhook in, console out. Learn the config format. |
+| [**GitHub to Slack**](/examples/github-to-slack/) | GitHub token, Slack webhook | Real PR events → Slack notifications |
+| [**Engineering Org**](/examples/engineering-org/) | GitHub, Linear, Claude Code, OpenClaw | Full autonomous engineering org with 5 routes |
+| [**Multi-Agent Supervisor**](/examples/multi-agent-supervisor/) | GitHub, Claude Code, OpenClaw | The feedback loop: actor completion → supervisor → re-dispatch |
+
 ## Get Started
 
-Ready to try it? Follow the [Getting Started guide](/start/getting-started/) to go from zero to a running system in five minutes. Or read [What is OrgLoop?](/start/what-is-orgloop/) for a deeper introduction to Organization as Code.
+The [Getting Started guide](/start/getting-started/) walks you through three tiers: a local webhook (2 min), connecting GitHub (10 min), and a full autonomous engineering org (30 min). Or read [What is OrgLoop?](/start/what-is-orgloop/) for a deeper introduction to Organization as Code.
