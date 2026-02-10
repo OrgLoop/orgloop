@@ -1,0 +1,18 @@
+# orgloop.yaml — Minimal example
+# The simplest possible OrgLoop setup: one source, one actor, one route.
+
+apiVersion: orgloop/v1alpha1
+kind: Project
+metadata:
+  name: minimal-org
+  description: "Minimal OrgLoop example"
+
+defaults:
+  poll_interval: 5m
+  log_level: info
+
+connectors:
+  - connectors/webhook.yaml
+
+loggers:
+  - loggers/default.yaml

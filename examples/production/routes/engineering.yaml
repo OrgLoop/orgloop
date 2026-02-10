@@ -1,0 +1,110 @@
+# Engineering event routing — the core org wiring
+
+apiVersion: orgloop/v1alpha1
+kind: RouteGroup
+metadata:
+  name: engineering-routes
+  description: "Engineering event routing"
+
+routes:
+  - name: github-pr-review
+    description: "PR review submitted → Engineering agent"
+
+    when:
+      source: github
+      events:
+        - resource.changed
+      filter:
+        provenance.platform_event: pull_request.review_submitted
+
+    transforms:
+      - ref: drop-bot-noise
+      - ref: dedup
+
+    then:
+      actor: openclaw-engineering-agent
+      config:
+        session_key: "hook:github:pr-review:engineering"
+        wake_mode: now
+        deliver: true
+
+    with:
+      prompt_file: "./sops/pr-review.md"
+
+  - name: github-pr-comment
+    description: "PR review comment → Engineering agent"
+
+    when:
+      source: github
+      events:
+        - resource.changed
+      filter:
+        provenance.platform_event: pull_request_review_comment
+
+    transforms:
+      - ref: drop-bot-noise
+      - ref: dedup
+
+    then:
+      actor: openclaw-engineering-agent
+      config:
+        session_key: "hook:github:pr-comment:engineering"
+        wake_mode: now
+        deliver: true
+
+    with:
+      prompt_file: "./sops/pr-review.md"
+
+  - name: github-ci-failure
+    description: "CI failure → Engineering agent"
+
+    when:
+      source: github
+      events:
+        - resource.changed
+      filter:
+        provenance.platform_event: workflow_run.completed
+
+    then:
+      actor: openclaw-engineering-agent
+      config:
+        session_key: "hook:github:ci-failure:engineering"
+        wake_mode: now
+
+    with:
+      prompt_file: "./sops/ci-failure.md"
+
+  - name: claude-code-to-supervisor
+    description: "Claude Code completion → Supervisor"
+
+    when:
+      source: claude-code
+      events:
+        - actor.stopped
+
+    then:
+      actor: openclaw-engineering-agent
+      config:
+        session_key: "hook:claude-code:engineering"
+        wake_mode: now
+
+  - name: linear-to-engineering
+    description: "Linear state change → Engineering agent"
+
+    when:
+      source: linear
+      events:
+        - resource.changed
+
+    transforms:
+      - ref: dedup
+
+    then:
+      actor: openclaw-engineering-agent
+      config:
+        session_key: "hook:linear:activity:engineering"
+        wake_mode: now
+        deliver: true
+
+    with:
+      prompt_file: "./sops/linear-ticket.md"

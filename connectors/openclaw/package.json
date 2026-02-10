@@ -1,0 +1,27 @@
+{
+  "name": "@orgloop/connector-openclaw",
+  "version": "0.1.0",
+  "description": "OrgLoop OpenClaw connector — webhook target for agent waking",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orgloop/sdk": "workspace:*"
+  },
+  "orgloop": {
+    "type": "connector",
+    "provides": ["target"],
+    "id": "openclaw"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

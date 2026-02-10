@@ -1,0 +1,61 @@
+# orgloop.yaml — GitHub to Slack
+# Single source, single actor, one route. Simplest real-world setup.
+
+apiVersion: orgloop/v1alpha1
+kind: Project
+metadata:
+  name: github-to-slack
+  description: "GitHub PR notifications to Slack"
+
+defaults:
+  poll_interval: 5m
+  log_level: info
+
+# ─── Source ──────────────────────────────────────────────────────────────────
+
+sources:
+  - id: github
+    description: GitHub PR activity
+    connector: "@orgloop/connector-github"
+    config:
+      repo: "${GITHUB_REPO}"
+      token: "${GITHUB_TOKEN}"
+      events:
+        - "pull_request.review_submitted"
+        - "pull_request_review_comment"
+        - "issue_comment"
+    poll:
+      interval: 5m
+    emits:
+      - resource.changed
+
+# ─── Actor ───────────────────────────────────────────────────────────────────
+
+actors:
+  - id: slack-notify
+    description: Slack incoming webhook
+    connector: "@orgloop/connector-webhook"
+    config:
+      url: "${SLACK_WEBHOOK_URL}"
+      method: POST
+
+# ─── Route ───────────────────────────────────────────────────────────────────
+
+routes:
+  - name: github-to-slack
+    description: "GitHub PR activity -> Slack notification"
+    when:
+      source: github
+      events:
+        - resource.changed
+    then:
+      actor: slack-notify
+
+# ─── Logger ──────────────────────────────────────────────────────────────────
+
+loggers:
+  - name: console-log
+    type: "@orgloop/logger-console"
+    config:
+      level: info
+      color: true

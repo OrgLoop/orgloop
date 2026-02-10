@@ -1,0 +1,706 @@
+---
+title: User Guide
+description: Install OrgLoop, add a module, configure your environment, and operate OrgLoop day-to-day.
+---
+
+A hands-on guide to setting up and running OrgLoop. This covers everything from installation through day-to-day operations. If you haven't read it yet, [What is OrgLoop?](/start/what-is-orgloop/) provides the conceptual foundation.
+
+## 1. Install OrgLoop
+
+**Prerequisites:** Node.js >= 22.
+
+```bash
+npm install -g @orgloop/cli
+```
+
+Verify:
+
+```bash
+orgloop version
+```
+
+## 2. Initialize a project
+
+`orgloop init` scaffolds a project with connector configs, directories, and a `.env.example`.
+
+**Interactive mode** (asks you questions):
+
+```bash
+mkdir my-org && cd my-org
+orgloop init
+```
+
+```
+? Project name: my-org
+? Description: Engineering organization event routing
+? Which connectors? github, linear, openclaw, claude-code
+```
+
+**Non-interactive mode** (for scripts, CI):
+
+```bash
+orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive
+```
+
+This creates:
+
+```
+my-org/
+  orgloop.yaml              # Project manifest
+  connectors/
+    github.yaml             # GitHub source config
+    linear.yaml             # Linear source config
+    openclaw.yaml           # OpenClaw actor config
+    claude-code.yaml        # Claude Code source config
+  routes/
+    example.yaml            # Example route (customize this)
+  transforms/
+    transforms.yaml         # Transform definitions
+    drop-bot-noise.sh       # Example transform script
+  loggers/
+    default.yaml            # File logger
+  sops/
+    example.md              # Example launch prompt
+  .env.example              # Required environment variables
+  .gitignore
+```
+
+If you selected `claude-code` as a connector, init also offers to install the Claude Code Stop hook into your `~/.claude/settings.json`.
+
+The CLI tells you what to do next:
+
+```
+Next: run `orgloop add module <name>` to install a workflow module, or `orgloop doctor` to check your environment.
+```
+
+## 3. Add a module
+
+Modules are pre-built workflow packages that add routes, transforms, SOPs, and connectors to your project. They are the primary way to install workflows.
+
+```bash
+orgloop add module engineering
+```
+
+```
+Found module: engineering (1.0.0)
+
+Module parameters:
+? Name of your GitHub source connector: github
+? Name of your Linear source connector: linear
+? Name of your Claude Code source connector: claude-code
+? Name of your agent actor: openclaw-engineering-agent
+
+Created connectors/github.yaml
+Created connectors/linear.yaml
+Created connectors/claude-code.yaml
+Created connectors/openclaw.yaml
+Created transforms/transforms.yaml
+Created sops/pr-review.md
+Created sops/ci-failure.md
+Created sops/linear-ticket.md
+
+Module "engineering" installed
+  5 route(s) will be added at runtime
+  4 connector(s) scaffolded
+
+Next: run `orgloop doctor` to check your environment.
+```
+
+The module:
+
+- Copies connector, transform, logger, and SOP files into your project
+- Adds connector/transform/logger references to `orgloop.yaml`
+- Registers the module in `orgloop.yaml` under `modules:`
+- Route definitions expand at runtime from the module's templates
+
+Available modules:
+
+| Module | Description |
+|--------|-------------|
+| **engineering** | Full engineering org: PR review, CI failure triage, Linear tickets, Claude Code supervision (5 routes) |
+| **minimal** | Simplest starter: 1 webhook source, 1 actor, 1 route |
+
+Non-interactive mode:
+
+```bash
+orgloop add module engineering --no-interactive --params '{"github_source":"github","agent_actor":"openclaw-engineering-agent"}'
+```
+
+## 4. Configure your environment
+
+OrgLoop configs reference secrets via `${VAR_NAME}` syntax. The actual values come from environment variables.
+
+### Check what you need
+
+```bash
+orgloop env
+```
+
+```
+Environment Variables:
+
+  ✗ GITHUB_REPO              connectors/github.yaml
+    → Repository in owner/repo format
+    → https://github.com/settings/tokens
+  ✗ GITHUB_TOKEN             connectors/github.yaml
+    → GitHub personal access token (repo scope)
+    → https://github.com/settings/tokens/new?scopes=repo,read:org
+  ✗ LINEAR_TEAM_KEY          connectors/linear.yaml
+  ✗ LINEAR_API_KEY           connectors/linear.yaml
+    → Linear API key
+  ✗ OPENCLAW_WEBHOOK_TOKEN   connectors/openclaw.yaml
+    → OpenClaw webhook authentication token
+
+0 of 5 variables set. 5 missing.
+Fix missing variables, then run `orgloop validate`.
+```
+
+Each missing variable shows:
+
+- Which YAML file requires it
+- A description of what the value is
+- A URL where you can create the credential (when available)
+
+### Set your variables
+
+```bash
+export GITHUB_REPO="my-org/my-repo"
+export GITHUB_TOKEN="ghp_..."
+export LINEAR_TEAM_KEY="ENG"
+export LINEAR_API_KEY="lin_api_..."
+export OPENCLAW_WEBHOOK_TOKEN="..."
+```
+
+Or use a `.env` file (copy from the generated `.env.example`).
+
+## 5. Health check
+
+```bash
+orgloop doctor
+```
+
+```
+OrgLoop Doctor — my-org
+
+  Credentials
+    ✓ GITHUB_REPO
+    ✓ GITHUB_TOKEN — valid (user: @alice, scopes: repo, read:org)
+    ✓ LINEAR_API_KEY
+    ✓ OPENCLAW_WEBHOOK_TOKEN
+
+  Services
+    ✓ openclaw — running at http://127.0.0.1:18789
+
+  Config
+    ✓ orgloop.yaml — valid project manifest
+    ✓ connectors/github.yaml — valid source definition
+    ✓ connectors/linear.yaml — valid source definition
+    ✓ connectors/openclaw.yaml — valid actor definition
+
+  Route Graph
+    (no warnings)
+
+All checks passed.
+Next: run `orgloop apply` to start.
+```
+
+Doctor goes beyond `env` -- it validates credentials against live APIs (when connectors provide validators), detects running services, validates config syntax, and checks route graph integrity.
+
+For CI/automation: `orgloop doctor --json` returns machine-readable output.
+
+## 6. Validate config
+
+```bash
+orgloop validate
+```
+
+```
+  ✓ orgloop.yaml                  valid project manifest
+  ✓ connectors/github.yaml        valid source definition
+  ✓ connectors/linear.yaml        valid source definition
+  ✓ connectors/openclaw.yaml      valid actor definition
+  ✓ connectors/claude-code.yaml   valid source definition
+  ✓ transforms/transforms.yaml    valid transform group
+  ✓ transform: drop-bot-noise     valid script transform
+  ✓ loggers/default.yaml          valid logger group
+  ✓ module:engineering             valid module (5 routes)
+
+0 errors, 0 warnings ✓
+Next: run `orgloop doctor` for a full health check.
+```
+
+Validate checks:
+
+- YAML syntax
+- Schema conformance (`apiVersion`, `kind`, required fields)
+- Reference integrity (routes reference existing sources, actors, transforms)
+- Transform script existence and permissions
+- Module manifest validation and route expansion
+- Route graph warnings (dead sources, unreachable actors, orphan transforms)
+- Missing environment variables
+
+## 7. Preview changes
+
+```bash
+orgloop plan
+```
+
+```
+OrgLoop Plan — my-org
+
+  Sources:
+    + github                  (new — poll every 5m)
+    + linear                  (new — poll every 5m)
+    + claude-code             (new — hook)
+
+  Actors:
+    + openclaw-engineering-agent  (new)
+
+  Routes:
+    + github-pr-review        (new)
+    + github-pr-comment       (new)
+    + github-ci-failure       (new)
+    + claude-code-to-supervisor  (new)
+    + linear-to-engineering   (new)
+
+  Transforms:
+    + drop-bot-noise          (new — script)
+
+  Loggers:
+    + file-log                (new)
+
+Plan: 12 to add, 0 to change, 0 to remove.
+
+Run `orgloop apply` to execute this plan.
+```
+
+Plan compares your YAML config against the last running state (stored in `~/.orgloop/state.json`). On first run, everything shows as `+ new`. After changes, you see `~ changed` and `- removed`.
+
+Symbols: `+` new, `~` changed, `=` unchanged, `-` removed.
+
+## 8. Visualize routes
+
+```bash
+orgloop routes
+```
+
+```
+OrgLoop Routes — my-org
+
+  github ──▶ github-pr-review ──▶ openclaw-engineering-agent
+                └─ filter: resource.changed
+                └─ transform: drop-bot-noise
+
+  github ──▶ github-ci-failure ──▶ openclaw-engineering-agent
+                └─ filter: resource.changed
+                └─ transform: drop-bot-noise
+
+  linear ──▶ linear-to-engineering ──▶ openclaw-engineering-agent
+                └─ filter: resource.changed
+
+  claude-code ──▶ claude-code-to-supervisor ──▶ openclaw-engineering-agent
+                └─ filter: actor.stopped
+
+4 routes, 0 warnings
+```
+
+For machine-readable output: `orgloop routes --json`.
+
+## 9. Start the engine
+
+```bash
+orgloop apply
+```
+
+```
+Applying plan...
+
+Source github — polling started (every 5m)
+Source linear — polling started (every 5m)
+Source claude-code — hook listener started
+Actor openclaw-engineering-agent — ready
+Route github-pr-review — active
+Route github-ci-failure — active
+Route linear-to-engineering — active
+Route claude-code-to-supervisor — active
+Logger file-log — configured
+
+OrgLoop is running. PID: 42831
+Logs: orgloop logs | Status: orgloop status | Stop: orgloop stop
+```
+
+What happens when apply starts:
+
+1. Loads and validates config (including module expansion)
+2. Checks all environment variables (fails fast if any are missing)
+3. Resolves connector packages (`@orgloop/connector-github`, etc.)
+4. Initializes sources, actors, transforms, loggers
+5. Starts the scheduler (poll-based sources poll on their interval)
+6. Starts the webhook server (for hook-based sources like Claude Code)
+7. Writes PID and state files to `~/.orgloop/`
+8. Runs in foreground (Ctrl+C to stop)
+
+### Background mode
+
+```bash
+orgloop apply --daemon
+```
+
+Forks to background and writes PID to `~/.orgloop/orgloop.pid`.
+
+### Pre-flight failures
+
+If env vars are missing, apply shows which ones and exits before starting anything:
+
+```
+Environment Variables:
+
+  ✓ GITHUB_REPO
+  ✗ GITHUB_TOKEN             connectors/github.yaml
+    → GitHub personal access token (repo scope)
+    → https://github.com/settings/tokens/new?scopes=repo,read:org
+
+1 variable missing — run `orgloop env` for details.
+```
+
+## 10. Day-to-day operations
+
+### Check status
+
+```bash
+orgloop status
+```
+
+```
+OrgLoop — my-org (running, PID 42831)
+
+  NAME            TYPE    INTERVAL
+  github          poll    5m
+  linear          poll    5m
+  claude-code     hook    —
+
+  NAME                          STATUS
+  openclaw-engineering-agent    healthy
+
+  NAME                         SOURCE         ACTOR
+  github-pr-review             github         openclaw-engineering-agent
+  github-ci-failure            github         openclaw-engineering-agent
+  linear-to-engineering        linear         openclaw-engineering-agent
+
+Recent Events (last 5):
+  TIME      SOURCE    TYPE                  ROUTE                    STATUS
+  14:32:01  github    resource.changed      github-pr-review         success
+  14:31:55  github    resource.changed      github-ci-failure        success
+  14:27:12  linear    resource.changed      linear-to-engineering    success
+```
+
+If OrgLoop is not running:
+
+```
+OrgLoop is not running.
+Run `orgloop apply` to start.
+```
+
+### View logs
+
+**Tail logs** (follows new entries):
+
+```bash
+orgloop logs
+```
+
+**Filter logs:**
+
+```bash
+orgloop logs --source github              # Only GitHub events
+orgloop logs --route github-pr-review     # Only this route
+orgloop logs --result drop                # Only dropped events
+orgloop logs --since 2h                   # Last 2 hours
+orgloop logs --event evt_abc123           # Trace a specific event
+```
+
+**Query mode** (don't follow, just print matches):
+
+```bash
+orgloop logs --no-follow --source linear --since 1h
+```
+
+**JSON output:**
+
+```bash
+orgloop logs --json --no-follow
+```
+
+### Test with synthetic events
+
+Generate a sample event for a connector:
+
+```bash
+orgloop test --generate github
+```
+
+This prints a realistic event JSON to stdout. Pipe it back to test the pipeline:
+
+```bash
+orgloop test --generate github | orgloop test -
+```
+
+```
+Injecting test event: resource.changed (source: github)
+
+Transform: drop-bot-noise — PASS (2ms)
+Route match: github-pr-review
+Delivery: openclaw-engineering-agent — OK (simulated)
+
+Event evt_abc1234567890 traced successfully through 1 route.
+```
+
+Test from a file:
+
+```bash
+orgloop test event.json
+```
+
+Dry run (trace path without delivering):
+
+```bash
+orgloop test event.json --dry-run
+```
+
+### Stop the engine
+
+```bash
+orgloop stop
+```
+
+Or press Ctrl+C if running in foreground.
+
+## 11. When OrgLoop stops
+
+When OrgLoop stops (Ctrl+C, `orgloop stop`, process killed):
+
+- **All polling stops.** Sources stop fetching new events.
+- **No new events are processed.** Events that arrived but weren't yet processed are lost (no durable queue by default).
+- **Actors are not notified.** Running actor sessions continue independently -- they don't know OrgLoop stopped.
+- **State is preserved.** The last config state remains in `~/.orgloop/state.json`. Source checkpoints remain in `~/.orgloop/checkpoints/`. Logs remain in `~/.orgloop/logs/`.
+
+To restart:
+
+```bash
+orgloop apply
+```
+
+Plan will show `= unchanged` for existing components and pick up where it left off (sources resume from their last checkpoint).
+
+## 12. Customizing
+
+### Add a new connector
+
+```bash
+orgloop add connector my-source --type source
+orgloop add connector my-target --type actor
+```
+
+Creates a YAML file in `connectors/` and adds it to `orgloop.yaml`.
+
+### Add a new route
+
+```bash
+orgloop add route pr-to-slack --source github --actor slack-notify
+```
+
+Creates a YAML file in `routes/`.
+
+### Add a transform
+
+Script-based (bash, any language):
+
+```bash
+orgloop add transform my-filter --type script
+```
+
+Creates a bash script in `transforms/` and a YAML definition. Exit code 0 = pass the event, exit code 78 = drop it.
+
+Package-based (TypeScript):
+
+```bash
+orgloop add transform my-enricher --type package
+```
+
+Creates a TypeScript package transform for more complex logic.
+
+### Add a logger
+
+```bash
+orgloop add logger audit-log
+```
+
+Creates a logger YAML in `loggers/`.
+
+### Manual editing
+
+You can always edit YAML files directly. The structure is:
+
+| Directory | Contents |
+|-----------|----------|
+| `orgloop.yaml` | Project manifest, references all other files |
+| `connectors/*.yaml` | Source and actor definitions |
+| `routes/*.yaml` | Routing rules |
+| `transforms/*.yaml` | Transform definitions (+ scripts) |
+| `loggers/*.yaml` | Logger definitions |
+| `sops/*.md` | Launch prompts referenced by routes |
+
+After editing, run `orgloop validate` to check your work.
+
+## 13. Building your own module
+
+A module is a directory with an `orgloop-module.yaml` manifest and supporting files.
+
+### Module structure
+
+```
+modules/my-workflow/
+  orgloop-module.yaml       # Module manifest
+  package.json              # npm package metadata
+  connectors/               # Connector YAMLs copied to project
+  transforms/               # Transform YAMLs/scripts copied to project
+  loggers/                  # Logger YAMLs copied to project
+  sops/                     # SOP files copied to project
+  templates/
+    routes.yaml             # Route templates (parameterized)
+```
+
+### Module manifest
+
+```yaml
+apiVersion: orgloop/v1alpha1
+kind: Module
+metadata:
+  name: my-workflow
+  description: "Description of what this module does"
+  version: 1.0.0
+
+requires:
+  connectors:
+    - type: source
+      id: github
+      connector: "@orgloop/connector-github"
+      required: true
+    - type: actor
+      id: agent
+      connector: "@orgloop/connector-openclaw"
+      required: true
+
+  credentials:
+    - name: GITHUB_TOKEN
+      description: "GitHub personal access token"
+      required: true
+      create_url: "https://github.com/settings/tokens/new?scopes=repo"
+
+parameters:
+  - name: github_source
+    description: "Name of your GitHub source connector"
+    type: string
+    required: true
+    default: github
+
+  - name: agent_actor
+    description: "Name of your agent actor"
+    type: string
+    required: true
+    default: openclaw-engineering-agent
+
+provides:
+  routes: 2
+  transforms: 1
+  sops: 1
+```
+
+### Route templates
+
+Route templates use `{{ params.X }}` for parameter substitution:
+
+```yaml
+# templates/routes.yaml
+apiVersion: orgloop/v1alpha1
+kind: RouteGroup
+
+routes:
+  - name: "{{ module.name }}-pr-review"
+    when:
+      source: "{{ params.github_source }}"
+      events:
+        - resource.changed
+    then:
+      actor: "{{ params.agent_actor }}"
+    with:
+      prompt_file: "{{ module.path }}/sops/pr-review.md"
+```
+
+### Local development
+
+During development, install from a local directory:
+
+```bash
+orgloop add module my-workflow --path ./modules/my-workflow
+```
+
+### Publish to npm
+
+Package as an npm module and publish:
+
+```bash
+cd modules/my-workflow
+npm publish
+```
+
+Users install with:
+
+```bash
+orgloop add module my-workflow
+```
+
+For a deeper guide, see [Building Modules](/guides/module-authoring/).
+
+## 14. CLI quick reference
+
+| Command | Description |
+|---------|-------------|
+| `orgloop init` | Scaffold a new project |
+| `orgloop add module <name>` | Install a workflow module |
+| `orgloop add connector <name>` | Add a new connector |
+| `orgloop add route <name>` | Add a new route |
+| `orgloop add transform <name>` | Add a new transform |
+| `orgloop add logger <name>` | Add a new logger |
+| `orgloop env` | Check environment variables |
+| `orgloop env check` | Check env vars (exit 1 if missing) |
+| `orgloop doctor` | Full environment health check |
+| `orgloop validate` | Validate config files |
+| `orgloop plan` | Show what would change (dry run) |
+| `orgloop routes` | Visualize routing topology |
+| `orgloop apply` | Start the runtime |
+| `orgloop apply --daemon` | Start as background daemon |
+| `orgloop status` | Show runtime status |
+| `orgloop logs` | Tail the event log |
+| `orgloop test [file]` | Inject a test event |
+| `orgloop test --generate <connector>` | Generate a sample event |
+| `orgloop stop` | Stop the runtime gracefully |
+| `orgloop hook claude-code-stop` | Forward Claude Code stop hook |
+
+**Global options:**
+
+| Option | Description |
+|--------|-------------|
+| `--config <path>` | Path to orgloop.yaml (default: `./orgloop.yaml`) |
+| `--json` | Machine-readable JSON output |
+| `--no-interactive` | Disable interactive prompts |
+
+For the full reference, see [CLI Command Reference](/cli/command-reference/).
+
+## Next steps
+
+- [Five Primitives](/concepts/five-primitives/) -- understand Sources, Actors, Routes, Transforms, Loggers in depth
+- [Event Taxonomy](/concepts/event-taxonomy/) -- the three event types and how they compose
+- [Engineering Org example](/examples/engineering-org/) -- full production setup walkthrough
+- [Building Connectors](/guides/connector-authoring/) -- create your own source or target connector
+- [Building Modules](/guides/module-authoring/) -- package and publish reusable workflows

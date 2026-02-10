@@ -1,0 +1,122 @@
+---
+title: OrgLoop
+description: Organization as Code — declarative event routing for autonomous AI organizations.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+**Organization as Code -- declarative event routing for autonomous AI organizations. You don't need reliable actors if you have a reliable system around them.**
+
+[Get Started](/start/getting-started/) | [View on GitHub](https://github.com/c-h-/orgloop)
+
+## Why OrgLoop
+
+You're running AI agents. Each one is genuinely capable. And yet you're still the glue.
+
+You're the one who remembers that Claude Code finished at 3am and nobody picked up the output. The one who notices CI failed three hours ago and no agent caught it. The intelligence exists, but the scaffolding to scale it doesn't.
+
+The attempted fixes -- better prompts, more agents, cron jobs -- don't work because they're solving a systems problem with better actors. That's like making a company work by hiring smarter people without building processes.
+
+**OrgLoop is the process.** A deterministic routing layer that ensures every meaningful state change triggers an appropriate response, regardless of whether any individual actor remembers to check.
+
+```
+Source.poll() --> EventBus --> matchRoutes() --> Transforms --> Actor.deliver()
+                                                                     |
+                                                          actor.stopped --> EventBus
+                                                                     (the loop)
+```
+
+When an actor finishes work, that completion is itself an event -- routed back into the system to trigger the next actor. The organization sustains itself through continuous cycles. That's OrgLoop.
+
+## Core Concepts
+
+<CardGrid>
+	<Card title="Five Primitives" icon="setting">
+		**Sources** emit events, **Actors** do work, **Routes** wire them together, **Transforms** filter and enrich, **Loggers** observe everything. [Learn more](/concepts/five-primitives/).
+	</Card>
+	<Card title="Event-Driven" icon="rocket">
+		Actors wake when something happens, not on a timer. Every state change triggers a deterministic, focused response with a situational launch prompt.
+	</Card>
+	<Card title="The Loop" icon="sync">
+		Actor completion feeds back as events. A dev agent finishes, the supervisor evaluates, relaunches if needed. The org loops.
+	</Card>
+	<Card title="Modules" icon="puzzle">
+		Install entire workflows as packages. `orgloop add module engineering` gives you PR review, CI triage, ticket routing, and Claude Code supervision in one command.
+	</Card>
+</CardGrid>
+
+## Quick Demo
+
+```bash
+# Scaffold a project with connectors
+orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive
+
+# Install a pre-built workflow module
+orgloop add module engineering
+
+# Check environment variables
+orgloop env
+
+# Start the engine
+orgloop apply
+```
+
+Once running, `orgloop status` shows your organization in action:
+
+```
+OrgLoop — my-org (running, uptime 3h 22m)
+
+Sources:
+  NAME          TYPE     INTERVAL  LAST POLL           EVENTS (24h)
+  github        poll     5m        2 min ago           47
+  linear        poll     5m        3 min ago           12
+  claude-code   hook     —         18 min ago          3
+
+Routes:
+  NAME                        MATCHED (24h)  DROPPED  ERRORS
+  github-pr-review            35             2        0
+  github-ci-failure           10             0        0
+  linear-to-engineering       12             0        0
+  claude-code-to-supervisor   3              0        0
+```
+
+## What Your Org Looks Like in YAML
+
+```yaml
+sources:
+  - id: github
+    connector: "@orgloop/connector-github"
+    config:
+      repo: "${GITHUB_REPO}"
+      token: "${GITHUB_TOKEN}"
+    poll:
+      interval: 5m
+
+  - id: claude-code
+    connector: "@orgloop/connector-claude-code"
+    config:
+      hook_type: post-exit
+
+actors:
+  - id: openclaw-engineering-agent
+    connector: "@orgloop/connector-openclaw"
+    config:
+      auth_token_env: "${OPENCLAW_WEBHOOK_TOKEN}"
+
+routes:
+  - name: "PR review received"
+    when: { source: github, events: [resource.changed] }
+    transforms: [drop-bot-noise]
+    then: { actor: openclaw-engineering-agent }
+    with: { prompt_file: "./sops/pr-review.md" }
+
+  - name: "Dev session done"
+    when: { source: claude-code, events: [actor.stopped] }
+    then: { actor: openclaw-engineering-agent }
+```
+
+Read that and you see an organization's nervous system. Every event that matters, where it goes, what responds. If there's a gap -- a lifecycle event with no route -- it's visible.
+
+## Get Started
+
+Ready to try it? Follow the [Getting Started guide](/start/getting-started/) to go from zero to a running system in five minutes. Or read [What is OrgLoop?](/start/what-is-orgloop/) for a deeper introduction to Organization as Code.
