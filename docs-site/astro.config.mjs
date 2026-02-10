@@ -44,9 +44,9 @@ export default defineConfig({
 				{
 					label: 'Examples',
 					items: [
-						{ label: 'Minimal', slug: 'examples/minimal' },
-						{ label: 'Engineering Org', slug: 'examples/engineering-org' },
+						{ label: 'Minimal (Start Here)', slug: 'examples/minimal' },
 						{ label: 'GitHub to Slack', slug: 'examples/github-to-slack' },
+						{ label: 'Engineering Org', slug: 'examples/engineering-org' },
 						{ label: 'Multi-Agent Supervisor', slug: 'examples/multi-agent-supervisor' },
 						{ label: 'Beyond Engineering', slug: 'examples/beyond-engineering' },
 						{ label: 'Org-to-Org', slug: 'examples/org-to-org' },

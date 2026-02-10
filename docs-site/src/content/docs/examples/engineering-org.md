@@ -3,7 +3,15 @@ title: "Example: Engineering Org"
 description: Full engineering organization — GitHub, Linear, Claude Code routing to OpenClaw agents.
 ---
 
-A complete engineering organization: three sources (GitHub, Linear, Claude Code) route events through a filter and dedup pipeline to an OpenClaw agent. This replaces a collection of bespoke cron jobs and shell scripts with a single declarative config.
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Prerequisites: 4 services">
+This example requires accounts and tokens for **GitHub**, **Linear**, **Claude Code**, and **OpenClaw**. If you are new to OrgLoop, start with the [Minimal](/examples/minimal/) or [GitHub to Slack](/examples/github-to-slack/) examples first, then come back here.
+</Aside>
+
+A complete engineering organization: three sources (GitHub, Linear, Claude Code) route events through a filter and dedup pipeline to an [OpenClaw](https://openclaw.ai) agent. This replaces a collection of bespoke cron jobs and shell scripts with a single declarative config.
+
+**What is OpenClaw?** OpenClaw is an AI agent orchestration platform that receives events via webhooks and dispatches work to AI agents (like Claude Code). It acts as the "actor" in this setup -- OrgLoop routes events to OpenClaw, and OpenClaw manages the agent sessions.
 
 ## Architecture
 
@@ -15,22 +23,31 @@ Claude Code (hook)──┘
 
 Three sources emit events. Two transforms clean them. Five routes wire specific event types to the actor with appropriate SOPs (launch prompts).
 
+## Prerequisites
+
+- Node.js >= 22
+- OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- A [GitHub](https://github.com) account with a repository to monitor
+- A [Linear](https://linear.app) account with an engineering team
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed locally
+- An [OpenClaw](https://openclaw.ai) instance running (local or hosted)
+
 ## Environment variables
 
 | Variable | Source | Description |
 |----------|--------|-------------|
 | `GITHUB_REPO` | GitHub | Repository in `owner/repo` format |
-| `GITHUB_TOKEN` | [GitHub PAT](https://github.com/settings/tokens) | Personal access token with repo read access |
-| `LINEAR_TEAM_KEY` | Linear | Team key (e.g., `ENG`) |
-| `LINEAR_API_KEY` | [Linear Settings](https://linear.app/settings/api) | Linear API key |
-| `OPENCLAW_WEBHOOK_TOKEN` | OpenClaw | Bearer token for OpenClaw API |
-| `OPENCLAW_DEFAULT_TO` | OpenClaw | Default message recipient |
+| `GITHUB_TOKEN` | [GitHub PAT](https://github.com/settings/tokens) | Personal access token with `repo` read access |
+| `LINEAR_TEAM_KEY` | [Linear](https://linear.app) | Team key (e.g., `ENG`) -- find it in your team's settings |
+| `LINEAR_API_KEY` | [Linear API Settings](https://linear.app/settings/api) | Personal API key |
+| `OPENCLAW_WEBHOOK_TOKEN` | [OpenClaw](https://openclaw.ai) | Bearer token for OpenClaw API |
+| `OPENCLAW_DEFAULT_TO` | [OpenClaw](https://openclaw.ai) | Default message recipient |
 
 ## Setup
 
 ```bash
 # Scaffold
-orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive --dir my-org
+orgloop init    # select github, linear, openclaw, claude-code
 cd my-org
 orgloop add module engineering
 

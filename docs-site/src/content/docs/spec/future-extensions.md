@@ -273,4 +273,44 @@ Implemented as `orgloop routes` command. ASCII rendering shows sources -> routes
 
 ---
 
+### FE-21: Transform Failure Policy (Fail-Open vs Fail-Closed)
+
+**Gap:** Transforms currently default to fail-open: if a transform errors, the event passes through unchanged. This is a pragmatic availability decision for data transforms (enrichment, dedup), but dangerous for **security transforms** (injection scanning, payload validation). A failing security scanner silently passing malicious content defeats its purpose.
+
+**Solution direction:**
+- Per-transform `on_error` policy: `pass` (fail-open, current default), `drop` (fail-closed), `halt` (stop pipeline, log error)
+- Security transforms should default to `drop` — if the scanner can't run, don't deliver the event
+- Explicit logging/alerting when any transform errors, regardless of policy
+- Route-level override: `on_transform_error: drop` to make all transforms in a route fail-closed
+
+**Design considerations:**
+- Backwards-compatible: existing configs without `on_error` keep current fail-open behavior
+- The distinction between "data transforms" (enrichment) and "security transforms" (scanning) could be formalized in the transform registration, or left to the user via config
+- Circuit breaker integration: if a transform errors N times in a row, escalate regardless of policy
+
+**Affects:** `packages/core/src/transform.ts`, `packages/sdk/src/transform.ts`, `packages/core/src/schema.ts` (config validation)
+
+---
+
+### FE-22: Module Trust & Permissions
+
+**Gap:** Modules are "installable organizations" — they bundle routes, SOPs, transforms, and dependency declarations. The moment third-party modules exist, trust becomes critical: a module's SOPs can instruct actors to do arbitrary things (merge PRs, close tickets, provision resources). Users need to understand what a module will do before installing it.
+
+**Solution direction:**
+- Module manifest declares **permissions** (what event types it routes, what actor capabilities it assumes, what env vars it requires)
+- `orgloop add module <name>` shows a permission summary before installing (similar to mobile app permission prompts)
+- Optional module signing (npm provenance, cosign, or similar) for verified publishers
+- `orgloop inspect module <name>` shows all routes, SOPs, transforms — full transparency before install
+- Scoped credentials: modules cannot access env vars they don't declare in their manifest
+
+**Design considerations:**
+- SOPs are markdown files — they're inspectable but not machine-verifiable for safety
+- The real risk is social engineering: a malicious SOP could instruct an actor to exfiltrate data or take destructive actions
+- Mitigation layers: manifest-declared permissions, human review of SOPs, actor-side guardrails (OrgLoop routes, actors enforce)
+- This intersects with FE-17 (orgctl) for credential scoping
+
+**Affects:** `packages/sdk/src/module.ts` (manifest schema), `packages/cli/src/commands/add.ts` (install flow), `packages/core/src/module.ts` (permission enforcement)
+
+---
+
 *This appendix is committed to the repo. Actionable work items referencing these IDs are tracked in `local/WORK_QUEUE.md` (gitignored, private sprint queue).*

@@ -1,21 +1,32 @@
 # Engineering Org Example
 
-A full engineering organization setup: GitHub, Linear, and Claude Code sources route events through transforms to an OpenClaw agent.
+A full engineering organization setup: GitHub, Linear, and Claude Code sources route events through transforms to an [OpenClaw](https://openclaw.ai) agent (an AI agent orchestration platform that dispatches work to AI agents like Claude Code).
 
 ## What it does
 
 - **GitHub** polls for PR reviews, comments, CI failures, and merges
 - **Linear** polls for ticket state changes and comments
-- **Claude Code** receives session completion events via webhook hook
+- **Claude Code** receives session completion events via post-exit hook
 - **Transforms** drop bot noise and deduplicate events
 - **OpenClaw** agent receives filtered events with launch prompts (SOPs)
 
 This replaces a collection of bespoke cron jobs and shell scripts with a single declarative config.
 
+## Prerequisites
+
+- Node.js >= 22
+- OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- A [GitHub](https://github.com) account with a repository to monitor
+- A [Linear](https://linear.app) account with an engineering team
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed locally
+- An [OpenClaw](https://openclaw.ai) instance running (local or hosted)
+
+> **New to OrgLoop?** Start with the [Minimal](../minimal/) example first -- no accounts or tokens required.
+
 ## Setup
 
 ```bash
-orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive --dir my-org
+orgloop init    # select github, linear, openclaw, claude-code
 cd my-org
 orgloop add module engineering
 ```
@@ -25,11 +36,11 @@ orgloop add module engineering
 | Variable | Source | Description |
 |----------|--------|-------------|
 | `GITHUB_REPO` | GitHub | Repository in `owner/repo` format |
-| `GITHUB_TOKEN` | GitHub | Personal access token with repo read access |
-| `LINEAR_TEAM_KEY` | Linear | Team key (e.g., `ENG`) |
-| `LINEAR_API_KEY` | Linear | Linear API key |
-| `OPENCLAW_WEBHOOK_TOKEN` | OpenClaw | Bearer token for OpenClaw API |
-| `OPENCLAW_DEFAULT_TO` | OpenClaw | Default message recipient |
+| `GITHUB_TOKEN` | [GitHub PAT](https://github.com/settings/tokens) | Personal access token with `repo` read access |
+| `LINEAR_TEAM_KEY` | [Linear](https://linear.app) | Team key (e.g., `ENG`) |
+| `LINEAR_API_KEY` | [Linear API Settings](https://linear.app/settings/api) | Personal API key |
+| `OPENCLAW_WEBHOOK_TOKEN` | [OpenClaw](https://openclaw.ai) | Bearer token for OpenClaw API |
+| `OPENCLAW_DEFAULT_TO` | [OpenClaw](https://openclaw.ai) | Default message recipient |
 
 ### Install Claude Code hook
 

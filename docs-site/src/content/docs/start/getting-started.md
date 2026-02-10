@@ -1,15 +1,25 @@
 ---
 title: Getting Started
-description: Install OrgLoop, scaffold a project, and start routing events in 5 minutes.
+description: Install OrgLoop and route your first event in 2 minutes — then grow into a full autonomous engineering org.
 ---
 
-Get from zero to a running OrgLoop system in five minutes.
+OrgLoop has three levels. You can stop at any one and have a working system.
 
-## Prerequisites
+| Tier | Time | What you need | What you get |
+|------|------|---------------|--------------|
+| **1. See It Work** | ~2 min | Nothing | Event routing with a webhook |
+| **2. Connect to GitHub** | ~10 min | GitHub token | Real PR/CI events flowing through OrgLoop |
+| **3. Full Engineering Org** | ~30 min | 4 services | Autonomous AI org with supervision loop |
 
-- Node.js >= 22
+Start at Tier 1. Every tier builds on the one before it.
 
-## Install
+---
+
+## Tier 1: See It Work
+
+A webhook source, a console logger, one route connecting them.
+
+### Install
 
 ```bash
 npm install -g @orgloop/cli
@@ -21,32 +31,88 @@ Verify:
 orgloop version
 ```
 
-## Initialize a project
+Requires Node.js >= 22.
 
-Scaffold a new project with the connectors you need:
+### Scaffold a project
 
 ```bash
-orgloop init --name my-org --connectors github,linear,openclaw,claude-code --no-interactive
+orgloop init
+```
+
+The wizard prompts for a project name and which connectors to include. Select **webhook** only — that's all you need for this tier.
+
+```bash
 cd my-org
 ```
 
-This creates the project structure -- `orgloop.yaml`, connector configs, directories for routes, transforms, loggers, and SOPs.
-
-## Add a module
-
-Install a pre-built workflow module. The `engineering` module adds routes for PR review, CI failure triage, Linear tickets, and Claude Code supervision:
+### Add a workflow module
 
 ```bash
-orgloop add module engineering
+orgloop add module minimal
 ```
 
-This scaffolds connector configs, transforms, SOP files, and registers 5 routes that expand at runtime.
+This adds a webhook source, a console logger, and a single route.
 
-For a simpler starting point, use `orgloop add module minimal` instead (1 source, 1 actor, 1 route).
+### Validate and run
 
-## Configure environment variables
+```bash
+orgloop validate
+orgloop apply
+```
 
-OrgLoop configs reference secrets via `${VAR_NAME}` syntax. Check what you need:
+OrgLoop is now running. The webhook source is listening on `http://localhost:3000/webhook`.
+
+### Send a test event
+
+In another terminal:
+
+```bash
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"type": "test", "message": "hello from orgloop"}'
+```
+
+You should see the event logged to the console:
+
+```
+▶ [source:webhook] resource.changed — {"type":"test","message":"hello from orgloop"}
+✓ [route:webhook-to-log] matched → console-log
+```
+
+**You just routed your first event through OrgLoop.** The webhook received an HTTP POST, the router matched it to a route, and the logger printed it. That's the core loop.
+
+Ready to connect it to real systems? Keep going.
+
+---
+
+## Tier 2: Connect to GitHub
+
+Add a real GitHub source so OrgLoop reacts to PR reviews, comments, and CI failures.
+
+### What you need
+
+One thing: a **GitHub personal access token** with `repo` scope.
+
+Create one here: [github.com/settings/tokens/new?scopes=repo](https://github.com/settings/tokens/new?scopes=repo)
+
+### Set environment variables
+
+```bash
+export GITHUB_REPO="your-org/your-repo"
+export GITHUB_TOKEN="ghp_..."
+```
+
+### Add the GitHub connector
+
+Start fresh with a new project that includes both connectors:
+
+```bash
+orgloop init
+```
+
+This time, select **github** and **webhook** in the connector picker. The wizard detects your `GITHUB_TOKEN` and shows its status.
+
+### Verify your environment
 
 ```bash
 orgloop env
@@ -55,41 +121,96 @@ orgloop env
 ```
 Environment Variables:
 
-  ✗ GITHUB_REPO              connectors/github.yaml
-  ✗ GITHUB_TOKEN             connectors/github.yaml
+  ✓ GITHUB_REPO              connectors/github.yaml
+  ✓ GITHUB_TOKEN             connectors/github.yaml
     → GitHub personal access token (repo scope)
-    → https://github.com/settings/tokens/new?scopes=repo,read:org
-  ✗ LINEAR_API_KEY           connectors/linear.yaml
-  ✗ OPENCLAW_WEBHOOK_TOKEN   connectors/openclaw.yaml
+    → https://github.com/settings/tokens/new?scopes=repo
 
-0 of 4 variables set. 4 missing.
+2 of 2 variables set. 0 missing.
 ```
 
-Set your variables:
-
-```bash
-export GITHUB_REPO="my-org/my-repo"
-export GITHUB_TOKEN="ghp_..."
-export LINEAR_TEAM_KEY="ENG"
-export LINEAR_API_KEY="lin_api_..."
-export OPENCLAW_WEBHOOK_TOKEN="..."
-```
-
-Or copy the generated `.env.example` to `.env` and fill it in. See the [User Guide](/start/user-guide/) for details on `orgloop env` and `orgloop doctor`.
-
-## Validate
-
-Check that everything is wired correctly:
+### Run it
 
 ```bash
 orgloop validate
+orgloop apply
 ```
 
-Validation checks YAML syntax, schema conformance, reference integrity (routes reference existing sources, actors, transforms), and that referenced files exist.
+OrgLoop now polls your GitHub repo every 5 minutes. When a PR review comes in or CI fails, you'll see it in the console. Events from GitHub flow through the same routing system as the webhook — sources are interchangeable.
 
-## Plan
+**You now have a real integration.** GitHub events are being polled, routed, and logged. Ready for the full autonomous engineering org? One more tier.
 
-Preview what will happen before starting:
+---
+
+## Tier 3: Full Autonomous Engineering Org
+
+This is the complete setup: GitHub, Linear, Claude Code, and OpenClaw working together as an autonomous engineering organization. Events from code reviews, tickets, and dev sessions flow to an AI agent that does the actual work.
+
+### What you need
+
+Four external services. Here's what each one is and why OrgLoop uses it:
+
+| Service | What it is | Why OrgLoop needs it | Get it |
+|---------|-----------|---------------------|--------|
+| **GitHub** | Code hosting | OrgLoop polls for PR reviews, comments, and CI failures | You already have this from Tier 2 |
+| **Linear** | Project management tool | OrgLoop polls for ticket state changes and comments | [Create API key](https://linear.app/settings/api) |
+| **Claude Code** | Anthropic's AI coding tool (CLI) | OrgLoop receives session completion hooks — it knows when a dev agent finishes work | [Install Claude Code](https://docs.anthropic.com/en/docs/claude-code) |
+| **OpenClaw** | AI agent orchestrator | The "actor" — receives events and does the actual work (code review, triage, etc.) | [OpenClaw setup guide](https://openclaw.com/docs) |
+
+### Set environment variables
+
+```bash
+# GitHub (from Tier 2)
+export GITHUB_REPO="your-org/your-repo"
+export GITHUB_TOKEN="ghp_..."
+
+# Linear
+export LINEAR_TEAM_KEY="ENG"
+export LINEAR_API_KEY="lin_api_..."
+
+# OpenClaw
+export OPENCLAW_WEBHOOK_TOKEN="your-token-here"
+```
+
+Claude Code doesn't need an env var — OrgLoop receives hooks directly from the Claude Code CLI via its post-exit hook mechanism.
+
+### Scaffold the full project
+
+```bash
+orgloop init
+```
+
+Select **github**, **linear**, **openclaw**, and **claude-code** in the connector picker. The wizard will also offer to install the Claude Code post-exit hook.
+
+```bash
+cd my-org
+```
+
+### Add the engineering module
+
+```bash
+orgloop add module engineering
+```
+
+This adds 5 pre-built routes: PR review, CI failure triage, Linear ticket routing, Claude Code supervision, and a feedback loop.
+
+### Check your environment
+
+```bash
+orgloop env
+```
+
+This shows every required variable, whether it's set, and where to get it if it's missing. Every missing variable includes a description and a direct link.
+
+### Run diagnostics
+
+```bash
+orgloop doctor
+```
+
+Doctor checks deeper than `env` — it verifies that services are reachable, credentials are valid, and connectors can connect.
+
+### Preview the plan
 
 ```bash
 orgloop plan
@@ -115,17 +236,15 @@ OrgLoop Plan — my-org
 Plan: 8 to add, 0 to change, 0 to remove.
 ```
 
-## Apply
-
-Start the engine:
+### Apply
 
 ```bash
 orgloop apply
 ```
 
-Events are now flowing. Sources poll on their configured intervals, routes match incoming events, transforms filter noise, and actors receive focused work with launch prompts.
+Events are now flowing. Sources poll on their configured intervals, routes match incoming events, transforms filter noise, and actors receive focused work with situational launch prompts.
 
-## Check status
+### Check status
 
 ```bash
 orgloop status
@@ -146,10 +265,12 @@ OrgLoop — my-org (running, PID 42831)
   claude-code-to-supervisor    claude-code    openclaw-engineering-agent
 ```
 
+---
+
 ## Next steps
 
-- [User Guide](/start/user-guide/) -- comprehensive day-to-day operations (logs, testing, customization, modules)
+- [User Guide](/start/user-guide/) -- day-to-day operations: logs, testing, customization, modules
 - [What is OrgLoop?](/start/what-is-orgloop/) -- deeper introduction to Organization as Code
-- [Five Primitives](/concepts/five-primitives/) -- understand the building blocks
+- [Five Primitives](/concepts/five-primitives/) -- understand Sources, Actors, Routes, Transforms, Loggers
 - [Engineering Org example](/examples/engineering-org/) -- full production setup walkthrough
 - [CLI Command Reference](/cli/command-reference/) -- all available commands

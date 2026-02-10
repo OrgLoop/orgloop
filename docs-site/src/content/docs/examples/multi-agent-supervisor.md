@@ -3,6 +3,12 @@ title: "Example: Multi-Agent Supervisor"
 description: Feedback loop pattern — actor completion events route back to a supervisor agent.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Prerequisites: 3 services">
+This example requires **GitHub**, **Claude Code**, and **OpenClaw**. If you are new to OrgLoop, start with the [Minimal](/examples/minimal/) example first (no accounts needed), then come back here.
+</Aside>
+
 The feedback loop pattern -- the defining feature of OrgLoop. Claude Code sessions emit `actor.stopped` events, which route to a supervisor actor that reviews work and can re-dispatch tasks. The supervisor's own completions feed back into the system, creating a recursive loop.
 
 ## What this example shows
@@ -40,8 +46,9 @@ The loop sustains itself. Every actor completion is an event. Every event can be
 
 - Node.js >= 22
 - OrgLoop CLI installed (`npm install -g @orgloop/cli`)
-- An OpenClaw instance running locally
-- Claude Code installed (for the post-exit hook)
+- A [GitHub](https://github.com) account with a repository to monitor
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed locally (for the post-exit hook)
+- An [OpenClaw](https://openclaw.ai) instance running locally -- OpenClaw is an AI agent orchestration platform that manages agent sessions
 
 ## Setup
 
@@ -50,9 +57,9 @@ The loop sustains itself. Every actor completion is an event. Every event can be
 | Variable | Description | Where to get it |
 |----------|-------------|-----------------|
 | `GITHUB_REPO` | Repository being worked on (`owner/repo`) | Your GitHub repo URL |
-| `GITHUB_TOKEN` | GitHub PAT with repo read access | [GitHub Settings](https://github.com/settings/tokens) |
-| `OPENCLAW_WEBHOOK_TOKEN` | Bearer token for OpenClaw API | Your OpenClaw instance |
-| `OPENCLAW_DEFAULT_TO` | Default message recipient | Your team configuration |
+| `GITHUB_TOKEN` | GitHub PAT with `repo` read access | [GitHub Settings > Tokens](https://github.com/settings/tokens) |
+| `OPENCLAW_WEBHOOK_TOKEN` | Bearer token for OpenClaw API | Your [OpenClaw](https://openclaw.ai) instance |
+| `OPENCLAW_DEFAULT_TO` | Default message recipient | Your OpenClaw team configuration |
 
 ### 2. Install the Claude Code hook
 

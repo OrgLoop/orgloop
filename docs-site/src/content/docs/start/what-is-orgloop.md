@@ -35,7 +35,7 @@ Same shift that happened with servers. SSH'ing into machines and tweaking config
 
 Your event sources, your actors, your wiring -- all declared in config. Auditable. No hidden state, no tribal knowledge, no human glue.
 
-Here's what a minimum viable autonomous engineering org looks like:
+Here's what a minimum viable autonomous engineering org looks like. This example uses GitHub, Linear, Claude Code, and OpenClaw. The [Getting Started guide](/start/getting-started/) walks through setting these up step by step -- starting with a zero-dependency demo.
 
 ```yaml
 sources:
@@ -170,6 +170,12 @@ Same actor, different prompts per route. The routing layer decides which SOP is 
 
 ## Next steps
 
-Ready to try it? The [Getting Started guide](/start/getting-started/) takes you from zero to a running system in five minutes.
+Ready to try it? The [Getting Started guide](/start/getting-started/) walks you through three tiers:
+
+1. **Try it now** -- a zero-dependency demo you can run in 2 minutes with no accounts or tokens
+2. **One real source** -- connect GitHub or Linear and see real events flow
+3. **Full engineering org** -- the complete setup shown above, with all four connectors wired together
+
+Start wherever makes sense for you. Most people start with the demo and add connectors as they go.
 
 For day-to-day operations, see the [User Guide](/start/user-guide/). For deeper architecture, see [Architecture](/concepts/architecture/).

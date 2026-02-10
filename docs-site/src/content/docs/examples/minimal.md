@@ -3,6 +3,12 @@ title: "Example: Minimal"
 description: The simplest possible OrgLoop setup — one source, one logger.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="tip" title="Start here">
+This is the best place to start with OrgLoop. A webhook source and a console logger -- one route connecting them. No external services required.
+</Aside>
+
 The simplest possible OrgLoop setup. One webhook source, one console logger, no environment variables. Use this to understand the config format before building anything real.
 
 ## What this example shows
@@ -15,6 +21,7 @@ The simplest possible OrgLoop setup. One webhook source, one console logger, no 
 
 - Node.js >= 22
 - OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- **No accounts or API tokens required**
 
 ## Setup
 
@@ -30,7 +37,7 @@ orgloop apply
 Or scaffold from scratch:
 
 ```bash
-orgloop init --name my-project --connectors webhook --no-interactive --dir my-project
+orgloop init    # select "webhook" when prompted for connectors
 cd my-project
 orgloop validate
 orgloop apply
@@ -123,4 +130,8 @@ Since this example has no routes or actors, events are ingested and logged but n
 
 ## Next steps
 
-Ready for something real? See the [GitHub to Slack](/examples/github-to-slack/) example for a single source-to-actor pipeline, or the [Engineering Org](/examples/engineering-org/) example for a full multi-source setup.
+Once you are comfortable with the config format, add a real source:
+
+- **[GitHub to Slack](/examples/github-to-slack/)** -- one source, one actor, two tokens. The simplest real-world setup.
+- **[Multi-Agent Supervisor](/examples/multi-agent-supervisor/)** -- the feedback loop pattern with Claude Code and a supervisor agent.
+- **[Engineering Org](/examples/engineering-org/)** -- the full multi-source setup with GitHub, Linear, Claude Code, and OpenClaw.

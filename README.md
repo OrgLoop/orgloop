@@ -20,15 +20,41 @@ Source -> [Transform] -> Route -> Actor
 
 ---
 
-## Quick Demo
+## Try It
+
+Set up a webhook source and a console logger, then route an event between them.
 
 ```bash
-orgloop init --name my-org --connectors github,linear,claude-code,openclaw --no-interactive
-orgloop add module engineering    # Install engineering workflow
-orgloop doctor                    # Check deps + credentials
-orgloop plan                      # Preview what will run
-orgloop apply                     # Start the runtime
-orgloop status                    # See everything flowing
+npm install -g @orgloop/cli
+orgloop init    # select "webhook" when prompted for connectors
+cd my-org
+orgloop add module minimal
+orgloop apply
+```
+
+In another terminal, send an event:
+
+```bash
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"type": "test", "message": "hello from orgloop"}'
+```
+
+You should see the event flow through the system and appear in your console log. That's the core loop: source emits, route matches, actor delivers, logger observes.
+
+---
+
+## What It Grows Into
+
+When you're ready to wire up real services, OrgLoop scales to a full engineering organization:
+
+```bash
+orgloop init    # select github, linear, claude-code, openclaw
+orgloop add module engineering
+orgloop doctor        # Check deps + credentials
+orgloop plan          # Preview what will run
+orgloop apply         # Start the runtime
+orgloop status        # See everything flowing
 ```
 
 ```
@@ -44,6 +70,16 @@ Routes:
   linear-to-project           12 matched, 0 errors
   claude-code-to-supervisor    3 matched, 0 errors
 ```
+
+**Prerequisites for the full engineering workflow:**
+
+- Node.js >= 22
+- GitHub account + [personal access token](https://github.com/settings/tokens) with `repo` read access
+- Linear account + [API key](https://linear.app/settings/api)
+- Claude Code installed locally
+- OpenClaw running locally
+
+See the **[Getting Started guide](https://orgloop.ai/start/getting-started/)** for step-by-step setup.
 
 ---
 
@@ -108,29 +144,6 @@ loggers:
 - **Full observability** -- every event, transform, delivery logged and traceable
 - **One process replaces N pollers** -- no more scattered LaunchAgents and cron jobs
 - **`plan` before `apply`** -- see exactly what will change (Terraform-style)
-
----
-
-## Getting Started
-
-```bash
-# Install
-npm install -g @orgloop/cli
-
-# Scaffold a project
-orgloop init --name my-org --connectors github,linear,claude-code,openclaw --no-interactive
-orgloop add module engineering
-
-# Check dependencies and credentials
-orgloop doctor
-
-# Validate, plan, apply
-orgloop validate
-orgloop plan
-orgloop apply
-```
-
-**[Full Getting Started Guide ->](https://orgloop.ai/start/getting-started/)**
 
 ---
 

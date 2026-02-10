@@ -1,6 +1,6 @@
 # Minimal Example
 
-The simplest possible OrgLoop setup: one source, one logger.
+**Start here.** The simplest possible OrgLoop setup: a webhook source and a console logger, one route connecting them.
 
 ## What it does
 
@@ -9,10 +9,16 @@ The simplest possible OrgLoop setup: one source, one logger.
 
 This is the starting point for understanding OrgLoop's config format.
 
+## Prerequisites
+
+- Node.js >= 22
+- OrgLoop CLI installed (`npm install -g @orgloop/cli`)
+- **No accounts or API tokens required**
+
 ## Setup
 
 ```bash
-orgloop init --name my-project --connectors webhook --no-interactive --dir my-project
+orgloop init    # select "webhook" when prompted for connectors
 cd my-project
 orgloop add module minimal
 orgloop validate
