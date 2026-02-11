@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
 
+
+## [0.1.4] - 2026-02-10
+
+Released from version 0.1.3.
+
 ## [0.1.3] - 2026-02-09
 
 Released from version 0.1.2.
