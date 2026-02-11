@@ -3,10 +3,16 @@
  *
  * Uses octokit.paginate() for all list endpoints to avoid data loss
  * from silent truncation at page boundaries.
+ *
+ * Rate limit awareness: reads X-RateLimit-Remaining/Reset headers,
+ * warns when low, pauses when exhausted. Initial sync defaults to a
+ * configurable lookback window (default 7d) instead of epoch to avoid
+ * burning through the 5000 req/hr limit on large repos.
  */
 
 import { Octokit } from '@octokit/rest';
 import type { OrgLoopEvent, PollResult, SourceConfig, SourceConnector } from '@orgloop/sdk';
+import { parseDuration } from '@orgloop/sdk';
 import {
 	normalizeCheckSuiteCompleted,
 	normalizeIssueComment,
@@ -31,14 +37,28 @@ function resolveEnvVar(value: string): string {
 	return value;
 }
 
+/** Default lookback window for initial sync (no checkpoint) */
+const DEFAULT_INITIAL_LOOKBACK = '7d';
+
+/** Remaining rate limit requests before we start warning */
+const RATE_LIMIT_WARN_THRESHOLD = 100;
+
 interface GitHubSourceConfig {
 	repo: string; // "owner/repo"
 	events: string[];
 	authors?: string[];
 	token: string;
+	/** How far back to look on initial sync (e.g. "7d", "24h"). Default: 7d */
+	initial_lookback?: string;
 }
 
 type GitHubPull = Record<string, unknown>;
+
+/** Rate limit state tracked from API response headers */
+interface RateLimitState {
+	remaining: number;
+	resetAt: Date;
+}
 
 export class GitHubSource implements SourceConnector {
 	readonly id = 'github';
@@ -48,6 +68,8 @@ export class GitHubSource implements SourceConnector {
 	private events: string[] = [];
 	private authors: string[] = [];
 	private sourceId = '';
+	private initialLookbackMs = parseDuration(DEFAULT_INITIAL_LOOKBACK);
+	private rateLimit: RateLimitState | null = null;
 
 	async init(config: SourceConfig): Promise<void> {
 		const cfg = config.config as unknown as GitHubSourceConfig;
@@ -58,16 +80,26 @@ export class GitHubSource implements SourceConnector {
 		this.authors = cfg.authors ?? [];
 		this.sourceId = config.id;
 
+		if (cfg.initial_lookback) {
+			this.initialLookbackMs = parseDuration(cfg.initial_lookback);
+		}
+
 		const token = resolveEnvVar(cfg.token);
 		this.octokit = new Octokit({ auth: token });
 	}
 
 	async poll(checkpoint: string | null): Promise<PollResult> {
-		const since = checkpoint ? new Date(checkpoint).toISOString() : null;
+		// Apply initial lookback window when no checkpoint exists
+		const since = checkpoint
+			? new Date(checkpoint).toISOString()
+			: new Date(Date.now() - this.initialLookbackMs).toISOString();
 		const events: OrgLoopEvent[] = [];
-		let latestTimestamp = since ?? new Date(0).toISOString();
+		let latestTimestamp = since;
 
 		try {
+			// Check rate limit before starting
+			await this.checkRateLimit();
+
 			// Fetch PRs once for methods that need them (reviews + review comments)
 			const needsPulls =
 				this.events.includes('pull_request.review_submitted') ||
@@ -121,10 +153,27 @@ export class GitHubSource implements SourceConnector {
 				events.push(...suites);
 			}
 		} catch (err: unknown) {
-			const error = err as { status?: number; message?: string };
-			if (error.status === 429) {
-				// Rate limited — back off, return what we have
-				return { events: [], checkpoint: latestTimestamp };
+			const error = err as {
+				status?: number;
+				message?: string;
+				response?: { headers?: Record<string, string> };
+			};
+
+			// Update rate limit state from error response if available
+			if (error.response?.headers) {
+				this.updateRateLimitFromHeaders(error.response.headers);
+			}
+
+			if (error.status === 429 || (error.status === 403 && this.isRateLimited())) {
+				const resetInfo = this.rateLimit
+					? ` Resets at ${this.rateLimit.resetAt.toISOString()}`
+					: '';
+				console.warn(`[github] Rate limited.${resetInfo} Returning partial results.`);
+				// Return what we have so far with current checkpoint
+				return {
+					events: this.filterByAuthors(events),
+					checkpoint: this.advanceCheckpoint(events, latestTimestamp),
+				};
 			}
 			if (error.status === 401 || error.status === 403) {
 				console.error(`[github] Auth error: ${error.message}`);
@@ -134,27 +183,84 @@ export class GitHubSource implements SourceConnector {
 		}
 
 		// Find the latest timestamp among all events
-		for (const event of events) {
-			if (event.timestamp > latestTimestamp) {
-				latestTimestamp = event.timestamp;
-			}
-		}
+		latestTimestamp = this.advanceCheckpoint(events, latestTimestamp);
 
-		// Filter by authors if configured
-		const filtered =
-			this.authors.length > 0
-				? events.filter((e) => this.authors.includes(e.provenance.author ?? ''))
-				: events;
-
-		return { events: filtered, checkpoint: latestTimestamp };
+		return { events: this.filterByAuthors(events), checkpoint: latestTimestamp };
 	}
 
 	/**
-	 * Fetch all recently-updated PRs using pagination.
-	 * Shared by pollReviews and pollReviewComments to avoid duplicate API calls.
+	 * Update rate limit state from response headers.
 	 */
-	private async fetchUpdatedPulls(since: string | null): Promise<GitHubPull[]> {
-		const allPulls = await this.octokit.paginate(this.octokit.pulls.list, {
+	private updateRateLimitFromHeaders(headers: Record<string, string>): void {
+		const remaining = headers['x-ratelimit-remaining'];
+		const reset = headers['x-ratelimit-reset'];
+		if (remaining != null && reset != null) {
+			this.rateLimit = {
+				remaining: Number.parseInt(remaining, 10),
+				resetAt: new Date(Number.parseInt(reset, 10) * 1000),
+			};
+		}
+	}
+
+	/**
+	 * Check rate limit state and wait if exhausted, warn if low.
+	 */
+	private async checkRateLimit(): Promise<void> {
+		if (!this.rateLimit) return;
+
+		if (this.rateLimit.remaining === 0) {
+			const waitMs = this.rateLimit.resetAt.getTime() - Date.now();
+			if (waitMs > 0) {
+				console.warn(
+					`[github] Rate limit exhausted. Waiting ${Math.ceil(waitMs / 1000)}s until ${this.rateLimit.resetAt.toISOString()}`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, waitMs));
+			}
+		} else if (this.rateLimit.remaining <= RATE_LIMIT_WARN_THRESHOLD) {
+			console.warn(
+				`[github] Rate limit low: ${this.rateLimit.remaining} requests remaining. Resets at ${this.rateLimit.resetAt.toISOString()}`,
+			);
+		}
+	}
+
+	/**
+	 * Check if the current state indicates a rate limit (remaining === 0).
+	 */
+	private isRateLimited(): boolean {
+		return this.rateLimit !== null && this.rateLimit.remaining === 0;
+	}
+
+	/**
+	 * Advance checkpoint to the latest event timestamp.
+	 */
+	private advanceCheckpoint(events: OrgLoopEvent[], fallback: string): string {
+		let latest = fallback;
+		for (const event of events) {
+			if (event.timestamp > latest) {
+				latest = event.timestamp;
+			}
+		}
+		return latest;
+	}
+
+	/**
+	 * Filter events by configured authors.
+	 */
+	private filterByAuthors(events: OrgLoopEvent[]): OrgLoopEvent[] {
+		if (this.authors.length === 0) return events;
+		return events.filter((e) => this.authors.includes(e.provenance.author ?? ''));
+	}
+
+	/**
+	 * Fetch recently-updated PRs using pagination with early termination.
+	 * Stops fetching pages once PRs are older than the since cutoff.
+	 */
+	private async fetchUpdatedPulls(since: string): Promise<GitHubPull[]> {
+		const result: GitHubPull[] = [];
+
+		// Use manual pagination with early termination to avoid fetching
+		// all PRs in repos with thousands of them
+		const iterator = this.octokit.paginate.iterator(this.octokit.pulls.list, {
 			owner: this.owner,
 			repo: this.repo,
 			state: 'all',
@@ -163,19 +269,39 @@ export class GitHubSource implements SourceConnector {
 			per_page: 100,
 		});
 
-		if (!since) return allPulls as unknown as GitHubPull[];
+		for await (const response of iterator) {
+			// Track rate limit from each response
+			if (response.headers) {
+				this.updateRateLimitFromHeaders(response.headers as unknown as Record<string, string>);
+			}
 
-		// Filter to PRs updated after the checkpoint
-		return (allPulls as unknown as GitHubPull[]).filter(
-			(pr) => pr.updated_at && (pr.updated_at as string) >= since,
-		);
+			const pulls = response.data as unknown as GitHubPull[];
+			let allOlderThanSince = true;
+
+			for (const pr of pulls) {
+				if (pr.updated_at && (pr.updated_at as string) >= since) {
+					result.push(pr);
+					allOlderThanSince = false;
+				}
+			}
+
+			// If every PR on this page is older than `since`, no need to fetch more
+			if (allOlderThanSince && pulls.length > 0) {
+				break;
+			}
+		}
+
+		return result;
 	}
 
-	private async pollReviews(since: string | null, pulls: GitHubPull[]): Promise<OrgLoopEvent[]> {
+	private async pollReviews(since: string, pulls: GitHubPull[]): Promise<OrgLoopEvent[]> {
 		const events: OrgLoopEvent[] = [];
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 
 		for (const pr of pulls) {
+			// Check rate limit before each per-PR API call
+			await this.checkRateLimit();
+
 			try {
 				const reviews = await this.octokit.paginate(this.octokit.pulls.listReviews, {
 					owner: this.owner,
@@ -187,7 +313,7 @@ export class GitHubSource implements SourceConnector {
 					const submitted = (review as unknown as Record<string, unknown>).submitted_at as
 						| string
 						| undefined;
-					if (!since || (submitted && submitted > since)) {
+					if (submitted && submitted > since) {
 						events.push(
 							normalizePullRequestReview(
 								this.sourceId,
@@ -205,25 +331,24 @@ export class GitHubSource implements SourceConnector {
 		return events;
 	}
 
-	private async pollReviewComments(
-		since: string | null,
-		pulls: GitHubPull[],
-	): Promise<OrgLoopEvent[]> {
+	private async pollReviewComments(since: string, pulls: GitHubPull[]): Promise<OrgLoopEvent[]> {
 		const events: OrgLoopEvent[] = [];
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 
 		for (const pr of pulls) {
+			await this.checkRateLimit();
+
 			try {
 				const comments = await this.octokit.paginate(this.octokit.pulls.listReviewComments, {
 					owner: this.owner,
 					repo: this.repo,
 					pull_number: pr.number as number,
-					...(since ? { since } : {}),
+					since,
 					per_page: 100,
 				});
 				for (const comment of comments) {
 					const updatedAt = (comment as unknown as Record<string, unknown>).updated_at as string;
-					if (!since || updatedAt > since) {
+					if (updatedAt > since) {
 						events.push(
 							normalizePullRequestReviewComment(
 								this.sourceId,
@@ -241,11 +366,11 @@ export class GitHubSource implements SourceConnector {
 		return events;
 	}
 
-	private async pollIssueComments(since: string | null): Promise<OrgLoopEvent[]> {
+	private async pollIssueComments(since: string): Promise<OrgLoopEvent[]> {
 		const comments = await this.octokit.paginate(this.octokit.issues.listCommentsForRepo, {
 			owner: this.owner,
 			repo: this.repo,
-			...(since ? { since } : {}),
+			since,
 			sort: 'updated',
 			direction: 'desc',
 			per_page: 100,
@@ -253,7 +378,7 @@ export class GitHubSource implements SourceConnector {
 
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 		return (comments as unknown as Record<string, unknown>[])
-			.filter((c) => !since || (c.updated_at as string) > since)
+			.filter((c) => (c.updated_at as string) > since)
 			.map((comment) => {
 				const issueNumber = (comment.issue_url as string)?.split('/').pop();
 				return normalizeIssueComment(
@@ -265,7 +390,7 @@ export class GitHubSource implements SourceConnector {
 			});
 	}
 
-	private async pollClosedPRs(since: string | null): Promise<OrgLoopEvent[]> {
+	private async pollClosedPRs(since: string): Promise<OrgLoopEvent[]> {
 		const pulls = await this.octokit.paginate(this.octokit.pulls.list, {
 			owner: this.owner,
 			repo: this.repo,
@@ -277,11 +402,11 @@ export class GitHubSource implements SourceConnector {
 
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 		return (pulls as unknown as GitHubPull[])
-			.filter((pr) => pr.closed_at && (!since || (pr.closed_at as string) > since))
+			.filter((pr) => pr.closed_at && (pr.closed_at as string) > since)
 			.map((pr) => normalizePullRequestClosed(this.sourceId, pr, repoData));
 	}
 
-	private async pollOpenedPRs(since: string | null): Promise<OrgLoopEvent[]> {
+	private async pollOpenedPRs(since: string): Promise<OrgLoopEvent[]> {
 		const pulls = await this.octokit.paginate(this.octokit.pulls.list, {
 			owner: this.owner,
 			repo: this.repo,
@@ -293,14 +418,11 @@ export class GitHubSource implements SourceConnector {
 
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 		return (pulls as unknown as GitHubPull[])
-			.filter((pr) => pr.created_at && (!since || (pr.created_at as string) > since))
+			.filter((pr) => pr.created_at && (pr.created_at as string) > since)
 			.map((pr) => normalizePullRequestOpened(this.sourceId, pr, repoData));
 	}
 
-	private async pollReadyForReviewPRs(since: string | null): Promise<OrgLoopEvent[]> {
-		// Fetch recently updated open PRs that are NOT drafts.
-		// We detect draft→ready by finding non-draft PRs updated since the checkpoint.
-		// This works because GitHub updates `updated_at` when draft status changes.
+	private async pollReadyForReviewPRs(since: string): Promise<OrgLoopEvent[]> {
 		const pulls = await this.octokit.paginate(this.octokit.pulls.list, {
 			owner: this.owner,
 			repo: this.repo,
@@ -312,14 +434,11 @@ export class GitHubSource implements SourceConnector {
 
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 		return (pulls as unknown as GitHubPull[])
-			.filter(
-				(pr) =>
-					pr.draft === false && pr.updated_at && (!since || (pr.updated_at as string) > since),
-			)
+			.filter((pr) => pr.draft === false && pr.updated_at && (pr.updated_at as string) > since)
 			.map((pr) => normalizePullRequestReadyForReview(this.sourceId, pr, repoData));
 	}
 
-	private async pollFailedWorkflowRuns(since: string | null): Promise<OrgLoopEvent[]> {
+	private async pollFailedWorkflowRuns(since: string): Promise<OrgLoopEvent[]> {
 		const data = await this.octokit.paginate(this.octokit.actions.listWorkflowRunsForRepo, {
 			owner: this.owner,
 			repo: this.repo,
@@ -329,13 +448,11 @@ export class GitHubSource implements SourceConnector {
 
 		const repoData = { full_name: `${this.owner}/${this.repo}` };
 		return (data as unknown as Record<string, unknown>[])
-			.filter((run) => !since || (run.updated_at as string) > since)
+			.filter((run) => (run.updated_at as string) > since)
 			.map((run) => normalizeWorkflowRunFailed(this.sourceId, run, repoData));
 	}
 
-	private async pollCheckSuites(since: string | null): Promise<OrgLoopEvent[]> {
-		// Check suites endpoint requires a ref; use the default branch
-		// We use the repository-level check-suites-for-ref with HEAD
+	private async pollCheckSuites(since: string): Promise<OrgLoopEvent[]> {
 		const { data } = await this.octokit.checks.listSuitesForRef({
 			owner: this.owner,
 			repo: this.repo,
@@ -349,7 +466,7 @@ export class GitHubSource implements SourceConnector {
 				(suite) =>
 					(suite.status as string) === 'completed' &&
 					suite.updated_at &&
-					(!since || (suite.updated_at as string) > since),
+					(suite.updated_at as string) > since,
 			)
 			.map((suite) => normalizeCheckSuiteCompleted(this.sourceId, suite, repoData));
 	}

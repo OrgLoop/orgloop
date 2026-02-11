@@ -11,13 +11,11 @@ import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadCliConfig, resolveConfigPath } from '../config.js';
-import { getEnvVarMeta } from '../env-metadata.js';
 import * as output from '../output.js';
 import { resolveConnectors } from '../resolve-connectors.js';
-import { scanEnvVars } from './env.js';
+import { printDoctorResult, runDoctor } from './doctor.js';
 
 const PID_DIR = join(homedir(), '.orgloop');
 const PID_FILE = join(PID_DIR, 'orgloop.pid');
@@ -66,52 +64,29 @@ async function saveState(config: import('@orgloop/sdk').OrgLoopConfig): Promise<
 
 // ─── Foreground run ──────────────────────────────────────────────────────────
 
-async function runForeground(configPath?: string): Promise<void> {
-	// Pre-flight: check all env vars before loadCliConfig crashes on the first one
-	try {
-		const resolvedPath = resolveConfigPath(configPath);
-		const envVars = await scanEnvVars(resolvedPath);
-		const missing: Array<{ name: string; source: string }> = [];
-		const present: Array<{ name: string; source: string }> = [];
+async function runForeground(configPath?: string, force?: boolean): Promise<void> {
+	// Pre-flight: run doctor checks before starting the engine
+	if (!force) {
+		try {
+			const resolvedPath = resolveConfigPath(configPath);
+			const doctorResult = await runDoctor(resolvedPath);
 
-		for (const [name, source] of envVars) {
-			if (process.env[name] === undefined) {
-				missing.push({ name, source });
-			} else {
-				present.push({ name, source });
+			if (doctorResult.status === 'error') {
+				printDoctorResult(doctorResult);
+				output.blank();
+				output.error('Doctor check failed. Fix errors above or use --force to bypass.');
+				process.exitCode = 1;
+				return;
 			}
+
+			if (doctorResult.status === 'degraded') {
+				printDoctorResult(doctorResult);
+				output.blank();
+				output.warn('Proceeding in degraded mode.');
+			}
+		} catch {
+			// Pre-flight is best-effort — fall through to loadCliConfig
 		}
-
-		if (missing.length > 0) {
-			const maxLen = Math.max(...[...envVars.keys()].map((k) => k.length));
-
-			output.blank();
-			output.heading('Environment Variables:');
-			output.blank();
-
-			for (const v of present) {
-				console.log(`  ${chalk.green('\u2713')} ${v.name.padEnd(maxLen)}  ${chalk.dim(v.source)}`);
-			}
-			for (const v of missing) {
-				console.log(`  ${chalk.red('\u2717')} ${v.name.padEnd(maxLen)}  ${chalk.dim(v.source)}`);
-				const meta = getEnvVarMeta(v.name);
-				if (meta) {
-					console.log(`    ${chalk.dim('\u2192')} ${chalk.dim(meta.description)}`);
-					if (meta.help_url) {
-						console.log(`    ${chalk.dim('\u2192')} ${chalk.dim(meta.help_url)}`);
-					}
-				}
-			}
-
-			output.blank();
-			output.error(
-				`${missing.length} variable${missing.length > 1 ? 's' : ''} missing \u2014 run \`orgloop env\` for details.`,
-			);
-			process.exitCode = 1;
-			return;
-		}
-	} catch {
-		// Pre-flight is best-effort — fall through to loadCliConfig
 	}
 
 	const config = await loadCliConfig({ configPath });
@@ -127,7 +102,15 @@ async function runForeground(configPath?: string): Promise<void> {
 	) => {
 		start(): Promise<void>;
 		stop(): Promise<void>;
-		status(): unknown;
+		status(): {
+			running: boolean;
+			sources: string[];
+			actors: string[];
+			routes: number;
+			uptime_ms: number;
+			httpPort?: number;
+			health?: unknown;
+		};
 	};
 
 	try {
@@ -294,6 +277,19 @@ async function runForeground(configPath?: string): Promise<void> {
 		await mkdir(PID_DIR, { recursive: true });
 		await writeFile(PID_FILE, String(process.pid), 'utf-8');
 
+		// Periodically write health state to state file
+		const healthInterval = setInterval(async () => {
+			try {
+				const status = engine.status() as Record<string, unknown>;
+				const state = JSON.parse(await readFile(STATE_FILE, 'utf-8').catch(() => '{}'));
+				state.health = status.health;
+				state.uptime_ms = status.uptime_ms;
+				await writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+			} catch {
+				// Non-fatal: health persistence is best-effort
+			}
+		}, 10_000);
+
 		output.blank();
 		output.info(`OrgLoop is running. PID: ${process.pid}`);
 		output.info('Logs: orgloop logs | Status: orgloop status | Stop: orgloop stop');
@@ -315,6 +311,7 @@ export function registerApplyCommand(program: Command): void {
 		.command('apply')
 		.description('Start/update the runtime with current config')
 		.option('--daemon', 'Run as background daemon')
+		.option('--force', 'Skip doctor pre-flight checks')
 		.action(async (opts, cmd) => {
 			try {
 				const globalOpts = cmd.parent?.opts() ?? {};
@@ -334,6 +331,28 @@ export function registerApplyCommand(program: Command): void {
 						await cleanupPidFile();
 					} catch {
 						// No PID file — proceed
+					}
+
+					// Pre-flight doctor check before forking
+					if (!opts.force) {
+						try {
+							const configForDoctor = resolveConfigPath(globalOpts.config);
+							const doctorResult = await runDoctor(configForDoctor);
+							if (doctorResult.status === 'error') {
+								printDoctorResult(doctorResult);
+								output.blank();
+								output.error('Doctor check failed. Fix errors above or use --force to bypass.');
+								process.exitCode = 1;
+								return;
+							}
+							if (doctorResult.status === 'degraded') {
+								printDoctorResult(doctorResult);
+								output.blank();
+								output.warn('Proceeding in degraded mode.');
+							}
+						} catch {
+							// Pre-flight is best-effort
+						}
 					}
 
 					// Fork to background
@@ -367,7 +386,7 @@ export function registerApplyCommand(program: Command): void {
 						output.info(`Logs: ${LOG_DIR}`);
 					}
 				} else {
-					await runForeground(globalOpts.config);
+					await runForeground(globalOpts.config, opts.force);
 				}
 			} catch (err) {
 				output.error(`Apply failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -376,9 +395,9 @@ export function registerApplyCommand(program: Command): void {
 		});
 }
 
-// Handle being run as a forked daemon child
+// Handle being run as a forked daemon child — skip doctor (parent already checked)
 if (process.env.ORGLOOP_DAEMON === '1') {
-	runForeground(process.env.ORGLOOP_CONFIG || undefined).catch((err) => {
+	runForeground(process.env.ORGLOOP_CONFIG || undefined, true).catch((err) => {
 		console.error('Daemon failed:', err);
 		process.exit(1);
 	});

@@ -284,7 +284,7 @@ export async function runDoctor(configPath: string, importFn?: ImportFn): Promis
 
 // ─── Display ─────────────────────────────────────────────────────────────────
 
-function printDoctorResult(result: DoctorResult): void {
+export function printDoctorResult(result: DoctorResult): void {
 	output.blank();
 	output.heading(`OrgLoop Doctor \u2014 ${result.project}`);
 

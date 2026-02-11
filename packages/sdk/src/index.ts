@@ -35,6 +35,8 @@ export type {
 	EventHandler,
 	Subscription,
 	DurationString,
+	SourceHealthStatus,
+	SourceHealthState,
 } from './types.js';
 
 export { parseDuration } from './types.js';

@@ -1,18 +1,22 @@
 /**
  * orgloop status — Show runtime status.
  *
- * Displays uptime, sources, actors, routes, and recent events.
+ * Displays uptime, sources, actors, routes, per-source health, and recent events.
  */
 
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { SourceHealthState } from '@orgloop/sdk';
+import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadCliConfig } from '../config.js';
 import * as output from '../output.js';
 
-const PID_FILE = join(homedir(), '.orgloop', 'orgloop.pid');
-const LOG_FILE = join(homedir(), '.orgloop', 'logs', 'orgloop.log');
+const PID_DIR = join(homedir(), '.orgloop');
+const PID_FILE = join(PID_DIR, 'orgloop.pid');
+const STATE_FILE = join(PID_DIR, 'state.json');
+const LOG_FILE = join(PID_DIR, 'logs', 'orgloop.log');
 
 function isProcessRunning(pid: number): boolean {
 	try {
@@ -43,6 +47,44 @@ interface LogEntry {
 	event_type?: string;
 	route?: string;
 	result?: string;
+}
+
+async function getHealthState(): Promise<SourceHealthState[]> {
+	try {
+		const content = await readFile(STATE_FILE, 'utf-8');
+		const state = JSON.parse(content);
+		if (Array.isArray(state.health)) {
+			return state.health as SourceHealthState[];
+		}
+	} catch {
+		// State file not available or no health data
+	}
+	return [];
+}
+
+function healthStatusColor(status: string): string {
+	switch (status) {
+		case 'healthy':
+			return chalk.green(status);
+		case 'degraded':
+			return chalk.yellow(status);
+		case 'unhealthy':
+			return chalk.red(status);
+		default:
+			return status;
+	}
+}
+
+function formatTimeAgo(isoTimestamp: string | null): string {
+	if (!isoTimestamp) return '—';
+	const ms = Date.now() - new Date(isoTimestamp).getTime();
+	const seconds = Math.floor(ms / 1000);
+	if (seconds < 60) return `${seconds}s ago`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	return `${Math.floor(hours / 24)}d ago`;
 }
 
 async function getRecentEvents(count: number): Promise<LogEntry[]> {
@@ -110,6 +152,8 @@ export function registerStatusCommand(program: Command): void {
 					/* ignore — config not loadable */
 				}
 
+				const healthData = await getHealthState();
+
 				if (output.isJsonMode()) {
 					output.json({
 						running: true,
@@ -118,6 +162,7 @@ export function registerStatusCommand(program: Command): void {
 						sources: config?.sources.length ?? 0,
 						actors: config?.actors.length ?? 0,
 						routes: config?.routes.length ?? 0,
+						health: healthData,
 					});
 					return;
 				}
@@ -127,20 +172,51 @@ export function registerStatusCommand(program: Command): void {
 				output.info(`  Status: running (PID ${pid})`);
 				output.info('  Workspace: default');
 
-				// Sources table
+				// Sources table with health
 				if (config && config.sources.length > 0) {
+					const healthMap = new Map(healthData.map((h) => [h.sourceId, h]));
+
 					output.table(
 						[
 							{ header: 'NAME', key: 'name', width: 16 },
-							{ header: 'TYPE', key: 'type', width: 10 },
-							{ header: 'INTERVAL', key: 'interval', width: 12 },
+							{ header: 'TYPE', key: 'type', width: 8 },
+							{ header: 'HEALTH', key: 'health', width: 12 },
+							{ header: 'LAST POLL', key: 'lastPoll', width: 12 },
+							{ header: 'ERRORS', key: 'errors', width: 8 },
+							{ header: 'EVENTS', key: 'events', width: 8 },
 						],
-						config.sources.map((s) => ({
-							name: s.id,
-							type: s.poll ? 'poll' : 'hook',
-							interval: s.poll?.interval ?? '—',
-						})),
+						config.sources.map((s) => {
+							const h = healthMap.get(s.id);
+							return {
+								name: s.id,
+								type: s.poll ? 'poll' : 'hook',
+								health: h ? healthStatusColor(h.status) : chalk.dim('—'),
+								lastPoll: h ? formatTimeAgo(h.lastSuccessfulPoll) : '—',
+								errors: h ? String(h.consecutiveErrors) : '—',
+								events: h ? String(h.totalEventsEmitted) : '—',
+							};
+						}),
 					);
+				}
+
+				// Show warnings for unhealthy sources
+				const unhealthy = healthData.filter((h) => h.status !== 'healthy');
+				if (unhealthy.length > 0) {
+					output.blank();
+					for (const h of unhealthy) {
+						if (h.circuitOpen) {
+							output.warn(
+								`${h.sourceId}: polling paused after ${h.consecutiveErrors} consecutive failures`,
+							);
+						} else {
+							output.warn(
+								`${h.sourceId}: ${h.consecutiveErrors} consecutive error${h.consecutiveErrors !== 1 ? 's' : ''}`,
+							);
+						}
+						if (h.lastError) {
+							output.info(`    Last error: ${h.lastError}`);
+						}
+					}
 				}
 
 				// Actors table

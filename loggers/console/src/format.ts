@@ -36,6 +36,9 @@ const PHASE_STYLES: Record<LogPhase, PhaseStyle> = {
 	'system.start': { icon: '\u25cf', color: MAGENTA }, // ●
 	'system.stop': { icon: '\u25cf', color: MAGENTA }, // ●
 	'system.error': { icon: '\u26a0', color: MAGENTA }, // ⚠
+	'source.circuit_open': { icon: '\u26a0', color: YELLOW }, // ⚠
+	'source.circuit_retry': { icon: '\u21bb', color: CYAN }, // ↻
+	'source.circuit_close': { icon: '\u2713', color: GREEN }, // ✓
 };
 
 /**
@@ -129,6 +132,9 @@ const PHASE_LEVELS: Record<LogPhase, number> = {
 	'system.start': 1, // info
 	'system.stop': 1, // info
 	'system.error': 3, // error
+	'source.circuit_open': 2, // warn
+	'source.circuit_retry': 1, // info
+	'source.circuit_close': 1, // info
 };
 
 const LEVEL_VALUES: Record<string, number> = {

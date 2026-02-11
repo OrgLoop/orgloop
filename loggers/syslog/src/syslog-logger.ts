@@ -53,6 +53,9 @@ const PHASE_SEVERITY: Record<LogPhase, number> = {
 	'source.emit': 7, // Debug
 	'transform.start': 7, // Debug
 	'route.no_match': 7, // Debug
+	'source.circuit_open': 4, // Warning
+	'source.circuit_retry': 6, // Informational
+	'source.circuit_close': 6, // Informational
 };
 
 /** Get severity for a phase, with optional fatal upgrade */

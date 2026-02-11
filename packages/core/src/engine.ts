@@ -18,6 +18,7 @@ import type {
 	OrgLoopEvent,
 	RouteDeliveryConfig,
 	SourceConnector,
+	SourceHealthState,
 	WebhookHandler,
 } from '@orgloop/sdk';
 import { generateTraceId } from '@orgloop/sdk';
@@ -36,6 +37,13 @@ import type { TransformPipelineOptions } from './transform.js';
 
 // ─── Engine Options ───────────────────────────────────────────────────────────
 
+export interface SourceCircuitBreakerOptions {
+	/** Consecutive failures before opening circuit (default: 5) */
+	failureThreshold?: number;
+	/** Backoff period in ms before retry when circuit is open (default: 60000) */
+	retryAfterMs?: number;
+}
+
 export interface OrgLoopOptions {
 	/** Pre-instantiated source connectors (keyed by source ID) */
 	sources?: Map<string, SourceConnector>;
@@ -51,6 +59,8 @@ export interface OrgLoopOptions {
 	checkpointStore?: CheckpointStore;
 	/** HTTP port for webhook server (default: 4800, or ORGLOOP_PORT env var) */
 	httpPort?: number;
+	/** Circuit breaker options for source polling */
+	circuitBreaker?: SourceCircuitBreakerOptions;
 }
 
 export interface EngineStatus {
@@ -60,6 +70,7 @@ export interface EngineStatus {
 	routes: number;
 	uptime_ms: number;
 	httpPort?: number;
+	health?: SourceHealthState[];
 }
 
 // ─── Engine Events ────────────────────────────────────────────────────────────
@@ -88,6 +99,11 @@ export class OrgLoop extends EventEmitter {
 	private running = false;
 	private startedAt = 0;
 
+	// Health tracking
+	private readonly healthStates = new Map<string, SourceHealthState>();
+	private readonly circuitBreakerOpts: Required<SourceCircuitBreakerOptions>;
+	private readonly circuitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 	constructor(config: OrgLoopConfig, options?: OrgLoopOptions) {
 		super();
 		this.config = config;
@@ -102,6 +118,10 @@ export class OrgLoop extends EventEmitter {
 			(process.env.ORGLOOP_PORT
 				? Number.parseInt(process.env.ORGLOOP_PORT, 10)
 				: DEFAULT_HTTP_PORT);
+		this.circuitBreakerOpts = {
+			failureThreshold: options?.circuitBreaker?.failureThreshold ?? 5,
+			retryAfterMs: options?.circuitBreaker?.retryAfterMs ?? 60_000,
+		};
 	}
 
 	/**
@@ -199,6 +219,20 @@ export class OrgLoop extends EventEmitter {
 			await this.webhookServer.start(this.httpPort);
 		}
 
+		// Initialize health state for all sources
+		for (const sourceCfg of this.config.sources) {
+			this.healthStates.set(sourceCfg.id, {
+				sourceId: sourceCfg.id,
+				status: 'healthy',
+				lastSuccessfulPoll: null,
+				lastPollAttempt: null,
+				consecutiveErrors: 0,
+				lastError: null,
+				totalEventsEmitted: 0,
+				circuitOpen: false,
+			});
+		}
+
 		// Start scheduler
 		this.scheduler.start((sourceId) => this.pollSource(sourceId));
 
@@ -224,6 +258,12 @@ export class OrgLoop extends EventEmitter {
 
 		// Stop scheduler
 		this.scheduler.stop();
+
+		// Clear circuit breaker retry timers
+		for (const timer of this.circuitRetryTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.circuitRetryTimers.clear();
 
 		// Shutdown sources
 		for (const [id, connector] of this.sources) {
@@ -280,6 +320,7 @@ export class OrgLoop extends EventEmitter {
 			routes: this.config.routes.length,
 			uptime_ms: this.running ? Date.now() - this.startedAt : 0,
 			...(this.webhookServer ? { httpPort: this.httpPort } : {}),
+			health: this.health(),
 		};
 	}
 
@@ -288,11 +329,28 @@ export class OrgLoop extends EventEmitter {
 		return this.loggerManager;
 	}
 
+	/**
+	 * Get health state for all sources.
+	 */
+	health(): SourceHealthState[] {
+		return [...this.healthStates.values()];
+	}
+
 	// ─── Internal: Poll a source ──────────────────────────────────────────────
 
 	private async pollSource(sourceId: string): Promise<void> {
 		const connector = this.sources.get(sourceId);
 		if (!connector) return;
+
+		const healthState = this.healthStates.get(sourceId);
+		if (!healthState) return;
+
+		// Circuit breaker: skip poll if circuit is open
+		if (healthState.circuitOpen) {
+			return;
+		}
+
+		healthState.lastPollAttempt = new Date().toISOString();
 
 		try {
 			const checkpoint = await this.checkpointStore.get(sourceId);
@@ -303,6 +361,22 @@ export class OrgLoop extends EventEmitter {
 				await this.checkpointStore.set(sourceId, result.checkpoint);
 			}
 
+			// Record successful poll
+			healthState.lastSuccessfulPoll = new Date().toISOString();
+			healthState.lastError = null;
+			healthState.totalEventsEmitted += result.events.length;
+
+			// If recovering from errors, log recovery
+			if (healthState.consecutiveErrors > 0) {
+				await this.emitLog('source.circuit_close', {
+					source: sourceId,
+					result: `recovered after ${healthState.consecutiveErrors} consecutive errors`,
+				});
+			}
+
+			healthState.consecutiveErrors = 0;
+			healthState.status = 'healthy';
+
 			// Process each event
 			for (const event of result.events) {
 				const enriched = event.trace_id ? event : { ...event, trace_id: generateTraceId() };
@@ -311,11 +385,63 @@ export class OrgLoop extends EventEmitter {
 		} catch (err) {
 			const error = new ConnectorError(sourceId, 'Poll failed', { cause: err });
 			this.emit('error', error);
-			await this.emitLog('system.error', {
-				source: sourceId,
-				error: error.message,
-			});
+
+			healthState.consecutiveErrors++;
+			healthState.lastError = err instanceof Error ? err.message : String(err);
+
+			// Update health status
+			if (healthState.consecutiveErrors >= this.circuitBreakerOpts.failureThreshold) {
+				healthState.status = 'unhealthy';
+				healthState.circuitOpen = true;
+
+				await this.emitLog('source.circuit_open', {
+					source: sourceId,
+					error: healthState.lastError,
+					result: `${healthState.consecutiveErrors} consecutive failures — polling paused, will retry in ${Math.round(this.circuitBreakerOpts.retryAfterMs / 1000)}s`,
+				});
+
+				// Schedule a retry after backoff
+				this.scheduleCircuitRetry(sourceId);
+			} else {
+				healthState.status = 'degraded';
+				await this.emitLog('system.error', {
+					source: sourceId,
+					error: error.message,
+				});
+			}
 		}
+	}
+
+	/**
+	 * Schedule a single retry poll after the backoff period.
+	 * If it succeeds, resume normal polling. If not, stay in circuit-open state.
+	 */
+	private scheduleCircuitRetry(sourceId: string): void {
+		// Clear any existing retry timer for this source
+		const existing = this.circuitRetryTimers.get(sourceId);
+		if (existing) clearTimeout(existing);
+
+		const timer = setTimeout(async () => {
+			this.circuitRetryTimers.delete(sourceId);
+			if (!this.running) return;
+
+			const healthState = this.healthStates.get(sourceId);
+			if (!healthState || !healthState.circuitOpen) return;
+
+			await this.emitLog('source.circuit_retry', {
+				source: sourceId,
+				result: 'attempting recovery poll',
+			});
+
+			// Temporarily allow poll by opening the circuit
+			healthState.circuitOpen = false;
+			await this.pollSource(sourceId);
+
+			// If poll failed, circuit will be re-opened by pollSource
+			// If poll succeeded, consecutiveErrors is 0 and circuitOpen stays false
+		}, this.circuitBreakerOpts.retryAfterMs);
+
+		this.circuitRetryTimers.set(sourceId, timer);
 	}
 
 	// ─── Internal: Process a single event ─────────────────────────────────────

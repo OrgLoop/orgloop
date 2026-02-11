@@ -27,6 +27,7 @@ import { registerStopCommand } from './commands/stop.js';
 import { registerTestCommand } from './commands/test.js';
 import { registerValidateCommand } from './commands/validate.js';
 import { registerVersionCommand } from './commands/version.js';
+import { loadDotEnv } from './dotenv.js';
 import { setJsonMode, setQuietMode, setVerboseMode } from './output.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,17 +51,18 @@ async function main(): Promise<void> {
 	program
 		.name('orgloop')
 		.description('OrgLoop — Organization as Code runtime')
-		.version(version, '-V, --version-flag', 'Print version number')
+		.version(version, '-V, --version', 'Print version number')
 		.option('-c, --config <path>', 'Path to orgloop.yaml')
 		.option('-w, --workspace <name>', 'Workspace name', 'default')
 		.option('-v, --verbose', 'Verbose output')
 		.option('--json', 'Output as JSON (for scripting)')
 		.option('--quiet', 'Errors only')
-		.hook('preAction', (thisCommand) => {
+		.hook('preAction', async (thisCommand) => {
 			const opts = thisCommand.opts();
 			if (opts.json) setJsonMode(true);
 			if (opts.verbose) setVerboseMode(true);
 			if (opts.quiet) setQuietMode(true);
+			await loadDotEnv(opts.config);
 		});
 
 	// Register all commands

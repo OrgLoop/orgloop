@@ -6,7 +6,7 @@
 
 // Main engine
 export { OrgLoop } from './engine.js';
-export type { OrgLoopOptions, EngineStatus } from './engine.js';
+export type { OrgLoopOptions, EngineStatus, SourceCircuitBreakerOptions } from './engine.js';
 
 // Config loading
 export { loadConfig, buildConfig } from './schema.js';

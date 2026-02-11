@@ -188,6 +188,9 @@ export interface LoggerDefinition {
 /** Pipeline phase identifiers */
 export type LogPhase =
 	| 'source.emit'
+	| 'source.circuit_open'
+	| 'source.circuit_retry'
+	| 'source.circuit_close'
 	| 'transform.start'
 	| 'transform.pass'
 	| 'transform.drop'
@@ -322,6 +325,31 @@ export interface ActorInstanceConfig {
 	connector: string;
 	/** Connector-specific config */
 	config: Record<string, unknown>;
+}
+
+// ─── Source Health ─────────────────────────────────────────────────────────────
+
+/** Health status of a source connector */
+export type SourceHealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+
+/** Per-source health state tracked by the engine */
+export interface SourceHealthState {
+	/** Source connector ID */
+	sourceId: string;
+	/** Current health status */
+	status: SourceHealthStatus;
+	/** Timestamp of last successful poll (ISO 8601) */
+	lastSuccessfulPoll: string | null;
+	/** Timestamp of last poll attempt (ISO 8601) */
+	lastPollAttempt: string | null;
+	/** Number of consecutive poll failures */
+	consecutiveErrors: number;
+	/** Last error message (null if last poll succeeded) */
+	lastError: string | null;
+	/** Total events emitted by this source */
+	totalEventsEmitted: number;
+	/** Whether the circuit breaker is open (polling paused) */
+	circuitOpen: boolean;
 }
 
 // ─── Event Bus ────────────────────────────────────────────────────────────────

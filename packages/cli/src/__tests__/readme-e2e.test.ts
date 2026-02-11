@@ -160,7 +160,7 @@ describe('README onboarding flow', () => {
 		expect(planResult.routes.length).toBeGreaterThan(0);
 
 		// All items should have a valid action
-		const validActions = ['add', 'unchanged', 'change'];
+		const validActions = ['add', 'unchanged', 'change', 'remove'];
 		for (const source of planResult.sources) {
 			expect(validActions).toContain(source.action);
 		}

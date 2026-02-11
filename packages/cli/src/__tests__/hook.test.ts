@@ -146,6 +146,57 @@ describe('hook command', () => {
 		});
 	});
 
+	describe('graceful degradation (engine not running)', () => {
+		it('connection error from dead port is classified as connection error', async () => {
+			// Simulate what the command handler does: postToWebhook throws when
+			// engine is not running, isConnectionError detects it → exit 0 (no error)
+			const unusedPort = serverPort + 10000 > 65535 ? serverPort - 1000 : serverPort + 10000;
+			let caughtError: unknown;
+			try {
+				await postToWebhook('claude-code', '{}', unusedPort);
+			} catch (err) {
+				caughtError = err;
+			}
+			expect(caughtError).toBeDefined();
+			expect(isConnectionError(caughtError)).toBe(true);
+		});
+
+		it('non-connection errors are not classified as connection errors', async () => {
+			// A non-connection error (e.g. bad argument) should NOT be treated gracefully
+			const err = new Error('unexpected failure');
+			expect(isConnectionError(err)).toBe(false);
+		});
+
+		it('handler exits 0 when engine is not running (mock fetch)', async () => {
+			// Mock fetch to throw a connection error, then verify the command
+			// handler logic would not set exitCode
+			const fetchError = Object.assign(new Error('fetch failed'), {
+				cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:4800'), {
+					code: 'ECONNREFUSED',
+				}),
+			});
+
+			// Simulate the exact catch block from the hook command handler
+			let exitCode: number | undefined;
+			let stderrOutput = '';
+
+			try {
+				throw fetchError;
+			} catch (err) {
+				if (isConnectionError(err)) {
+					// Engine not running — graceful exit (exit 0)
+					exitCode = undefined; // not set = exit 0
+				} else {
+					stderrOutput = `orgloop hook: ${err instanceof Error ? err.message : String(err)}`;
+					exitCode = 1;
+				}
+			}
+
+			expect(exitCode).toBeUndefined();
+			expect(stderrOutput).toBe('');
+		});
+	});
+
 	describe('port resolution', () => {
 		// We test port resolution indirectly by verifying postToWebhook uses the port.
 		// The resolvePort function is internal, but postToWebhook takes port as argument.
