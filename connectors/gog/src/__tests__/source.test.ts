@@ -30,7 +30,7 @@ function makeMessage(
 		snippet: 'Hey, following up on our discussion...',
 		internalDate: '1707660000000',
 		from: 'Jane Doe <jane@acme.com>',
-		to: 'Charlie <charlie@kindo.ai>',
+		to: 'Alice <alice@example.com>',
 		cc: '',
 		subject: 'Partnership proposal',
 		date: 'Mon, 11 Feb 2025 14:00:00 -0800',
@@ -362,8 +362,8 @@ describe('GogSource', () => {
 			const source = await createSource();
 			const msg = makeMessage({
 				from: '"Jane Doe" <jane@acme.com>',
-				to: 'Charlie <charlie@kindo.ai>, Bob <bob@kindo.ai>',
-				cc: 'Alice <alice@kindo.ai>',
+				to: 'Alice <alice@example.com>, Bob <bob@example.com>',
+				cc: 'Alice <alice@example.com>',
 			});
 
 			mockExecGog(source, async (args) => {
@@ -378,10 +378,10 @@ describe('GogSource', () => {
 				email: 'jane@acme.com',
 			});
 			expect(result.events[0].payload.to).toEqual([
-				{ name: 'Charlie', email: 'charlie@kindo.ai' },
-				{ name: 'Bob', email: 'bob@kindo.ai' },
+				{ name: 'Alice', email: 'alice@example.com' },
+				{ name: 'Bob', email: 'bob@example.com' },
 			]);
-			expect(result.events[0].payload.cc).toEqual([{ name: 'Alice', email: 'alice@kindo.ai' }]);
+			expect(result.events[0].payload.cc).toEqual([{ name: 'Alice', email: 'alice@example.com' }]);
 		});
 
 		it('includes body when fetch_body is true and body is present', async () => {

@@ -184,7 +184,10 @@ export class GogSource implements SourceConnector {
 			this.saveSeenCache();
 			return {
 				events,
-				checkpoint: JSON.stringify({ mode: 'search', lastPollTimestamp: new Date().toISOString() } satisfies GogCheckpoint),
+				checkpoint: JSON.stringify({
+					mode: 'search',
+					lastPollTimestamp: new Date().toISOString(),
+				} satisfies GogCheckpoint),
 			};
 		}
 
