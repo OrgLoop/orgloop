@@ -107,6 +107,8 @@ export interface RouteTransformRef {
 	ref: string;
 	/** Optional transform-specific config override */
 	config?: Record<string, unknown>;
+	/** Error policy override: what to do when this transform fails (overrides definition-level on_error) */
+	on_error?: TransformErrorPolicy;
 }
 
 /** Route delivery target */

@@ -187,7 +187,7 @@ export async function executeTransformPipeline(
 			trace_id: current.trace_id,
 		});
 
-		const policy: TransformErrorPolicy = def.on_error ?? 'pass';
+		const policy: TransformErrorPolicy = ref.on_error ?? def.on_error ?? 'pass';
 
 		if (def.type === 'script' && def.script) {
 			const result = await runScript(
