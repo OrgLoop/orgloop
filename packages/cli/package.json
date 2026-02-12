@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "OrgLoop command-line interface",
   "type": "module",
   "main": "dist/index.js",
