@@ -9,9 +9,9 @@ description: "Organization as Code — the vision behind OrgLoop."
 
 ## The Wall
 
-You're running AI agents. OpenClaw, Claude Code, Codex, Deep Research, Gas Town, maybe all of them. Each one is genuinely capable. And yet you're still the glue.
+You're running AI agents. Claude Code, Codex, Deep Research, maybe all of them. Each one is genuinely capable. And yet you're still the glue.
 
-You're the one who remembers that Claude Code finished at 3am and nobody picked up the output. The one who notices CI failed three hours ago and no agent caught it. The one awake at 2am thinking "did that PR ever get reviewed?" The intelligence exists, but the scaffolding to scale it doesn't.
+Claude Code finishes at 3am and nobody picks up the output. CI fails and no agent notices. You're context-switching between tools, checking dashboards, remembering what finished and what didn't. The agents have capability — what's missing is the coordination layer between them.
 
 You've tried the obvious fixes:
 
@@ -31,21 +31,23 @@ AI agents are the same. They're probabilistic, not because the tech is bad, but 
 
 The breakthrough: **a deterministic layer that ensures every meaningful state change triggers an appropriate response, regardless of whether any individual actor remembers to check.**
 
-And it's an open architecture. Any system with an API can be a source. Any agent, webhook, or human can be an actor. GitHub today, Workday tomorrow, your internal tools next week. The primitives don't care what's on either end. You write a connector, you're in.
+And it's an open architecture. Any system with an API can be a source. Any agent, webhook, or human can be an actor. The primitives don't care what's on either end — write a connector and you're in. Build your organization embracing all of your specialized agents: Claude Code implementers, OpenClaw supervisors, Deep Research analysts. Connect GitHub with Salesforce and Gmail. Whatever you want.
 
 > We don't implement the action. We automate the nudge, with direction.
 
 An agent told to do a specific job at a specific point in time is pretty reliable. We just need to employ them at the right time, for the right job, with the right instructions.
 
-And here's what people miss: no amount of LLMs getting better makes it a good idea to stuff a 600-line SOP into an agent that wakes on an hourly heartbeat to triage 1,000 notifications. Yes, the next model generation will be smarter. But you're still playing on hard mode. This simple architectural solve means you don't need to wait for superintelligence to keep up with your ticket queue. A focused agent with a focused prompt, woken at the right moment, handles it today.
+No amount of LLMs getting better makes it a good idea to stuff a 600-line SOP into an agent that wakes on an hourly heartbeat to triage 1,000 notifications. The next model generation will be smarter, but you're still playing on hard mode. A focused agent with a focused prompt, woken at the right moment, handles it today. You don't need to wait for superintelligence to keep up with your ticket queue.
+
+🧬 **Infrastructure as code reshaped how we manage systems. Organization as code reshapes how we manage intelligence.** LLMs make it possible to define entire autonomous organizations — with routing, escalation, handoffs, and recovery — in declarative, repeatable, deployable configurations. That's the bet OrgLoop is making.
 
 ## 🧬 Organization as Code
 
 I call this paradigm **Organization as Code**.
 
-Same shift that happened with servers. SSH'ing into machines and tweaking config files became Infrastructure as Code. Declarative. Version-controlled. Reproducible. Organization as Code applies that same shift to how organizations operate. Your event sources, your actors, your wiring, all declared in config. Auditable. No hidden state, no tribal knowledge, no human glue.
+Same shift that happened with servers. SSH'ing into machines and tweaking config files became Infrastructure as Code. Declarative. Version-controlled. Reproducible. Organization as Code applies that same shift to how organizations operate. Your event sources, your actors, your wiring — all declared in config. Auditable, diffable, reproducible. No hidden state, no tribal knowledge, no human glue.
 
-Here's what my minimum viable autonomous engineering org looks like:
+My minimum viable autonomous engineering org:
 
 ```yaml
 # orgloop.yaml
@@ -111,7 +113,7 @@ Read that and you see an organization's nervous system. Every event that matters
 
 **Loggers** are passive observers. Every event, every transform, every delivery, captured for debugging and audit.
 
-And here's what makes it click: **the org loops.** 🧬 When an actor finishes work, that completion is itself an event, routed back into the system to trigger the next actor:
+**The org loops.** 🧬 When an actor finishes work, that completion is itself an event, routed back into the system to trigger the next actor:
 
 ```yaml
 # The loop: Claude Code finishes -> supervisor evaluates -> relaunches if needed
@@ -138,13 +140,13 @@ routes:
   # which could trigger yet another route. The org loops.
 ```
 
-The dev agent is both an actor (it does work) and a source (its completion emits events). The supervisor evaluates, relaunches, and its own completion feeds back in. The organization sustains itself through continuous cycles of events triggering actors triggering events. That's **OrgLoop**.
+The dev agent is both an actor (it does work) and a source (its completion emits events). The supervisor evaluates, relaunches, and its own completion feeds back in. The organization sustains itself through continuous cycles of events triggering actors triggering events.
 
-## Launch Prompts: Focused Context Beats Overwhelming Context
+## Launch Prompts: Skills for Events
 
-Notice the `with` on those routes. That's a **launch prompt**, a focused SOP delivered alongside the event, telling the actor exactly how to approach this specific situation.
+Notice the `with` on those routes. That's a **launch prompt** — a focused SOP delivered alongside the event, telling the actor exactly what to do in this specific situation. The actor doesn't just get *notified* that something happened. It gets a scoped SOP for exactly what happened.
 
-Without launch prompts, the actor's system prompt becomes a grab-bag: "if you get a PR review, do X; if CI fails, do Y; if a ticket moves, do Z..." Scale that to twenty event types and the agent drowns. This is the same problem that led OpenClaw from MCP tools (everything loaded always) to Skills (focused, loaded only when relevant). The agent performs dramatically better with one clear SOP than a menu of twenty.
+This is the key differentiator. Without launch prompts, the actor's system prompt becomes a grab-bag: "if you get a PR review, do X; if CI fails, do Y; if a ticket moves, do Z..." Scale that to twenty event types and the agent drowns. The same way a skill gives an agent a specific capability, a route gives an agent situational purpose. One job, one SOP, one lifetime.
 
 Routes carry focused launch prompts. Your actor gets situational SOPs per event, not every possible instruction at once. The actor owns its identity and capabilities. The route owns the situational instructions.
 
@@ -202,30 +204,27 @@ Same five primitives. Different connectors. The engineering org is the proof cas
 
 **A foundation for observability.** Every event flows through OrgLoop with a trace ID. What's in flight, what's stalled, what's completing, what's failing, across every business process. This is the foundation for the oversight layer that lets you manage at the level of objectives, not individual agent sessions.
 
-**Launch prompts that scale.** Route-paired SOPs mean your actors get sharper as your org grows more complex, not duller. Twenty routes means twenty focused instructions, not one bloated system prompt. The MCP tools to Skills insight, applied to organizational wiring.
+**Launch prompts that scale.** Route-paired SOPs mean your actors get sharper as your org grows more complex, not duller. Twenty routes means twenty focused instructions, not one bloated system prompt.
 
-**Composability.** Connectors, transforms, and loggers are independently publishable packages. Anyone can build and share a connector for their platform. No approval needed, no registry gatekeeping. The ecosystem grows without bottlenecks.
+**Open-ended by design.** Connectors, transforms, and loggers are independently publishable packages. GitHub today, Salesforce tomorrow, your internal tools next week — whatever you want, use an existing connector or contribute one. No approval needed, no registry gatekeeping. OrgLoop isn't limited to the connectors that exist today. The system is a platform, not a product with a fixed integration list.
 
 **Installable Autonomous Organizations.** This is where it gets interesting. Think about what a module actually is: it's an entire operational workflow, packaged as code. My engineering org -- the sources, routes, transforms, SOPs, and a manifest declaring every dependency down to the API tokens and external services -- is a module you can install. The module doesn't just give you YAML files. It declares the full truth about what it needs, and OrgLoop tells you exactly what's missing and how to get it. Install the module, follow the guidance, start. You just cloned a functioning autonomous engineering department.
 
-Now scale that idea. Someone builds a killer customer support flow: Zendesk + Intercom + a triage agent + escalation routes + resolution SOPs. They publish it. You install it. Someone else packages an entire DevOps org: PagerDuty + Datadog + runbook agents + incident response routes. Install, configure, run.
+Scale that idea. Someone builds a customer support flow — Zendesk + Intercom + triage routes + escalation SOPs — and publishes it as a module. You install it, configure your credentials, and the organization runs. Someone else packages an entire DevOps org: PagerDuty + Datadog + runbook agents + incident response routes. Install, configure, run.
 
-These aren't templates. They're running organizations you can clone. A task, a role, a department, a full org chart. Packaged, versioned, installable. And if a dependency isn't ready yet -- an actor isn't running, a service isn't installed -- the system doesn't break. Events queue. The routing layer keeps working. You add the missing piece when you're ready, and everything catches up. The app store for autonomous organizations.
+These aren't templates. They're complete operational topologies with declared dependencies — installable autonomous organizations. Your org config is code: version it, diff it, clone it, deploy it. And if a dependency isn't ready yet — an actor isn't running, a service isn't installed — the system doesn't break. Events queue. The routing layer keeps working. You add the missing piece when you're ready, and everything catches up.
 
 **Security as a first-class concern.** Transforms give you a standardized place to implement security policy: prompt injection scanning, provenance-based filtering, rate limiting. Declared in your org spec and auditable.
 
 ## The Autonomy Ladder
 
-1. **Manual:** Human does everything, AI assists occasionally
-2. **Copilot:** AI does work, human reviews everything
-3. **Supervised:** AI works autonomously, human monitors and intervenes
-4. **Autonomous:** System runs itself, human observes and steers
+Most teams are stuck in copilot mode — AI does work, humans review everything. Some have pushed into supervised territory, where AI works autonomously but humans still monitor and intervene. Very few have reached true autonomy: the system runs itself, humans observe and steer.
 
-Most teams are stuck between 2 and 3. They have capable actors but no system to ensure work accumulates toward objectives over long time horizons. The human is still the glue, routing decisions and nudges through themselves, thinking this is what AI can do.
+The gap between supervised and autonomous isn't actor intelligence. It's the absence of a system that ensures work accumulates toward objectives over long time horizons. The human is still the glue, routing decisions and nudges through themselves.
 
 The real question: can I define an objective and have event sources acted on from input to output with no human in the loop?
 
-Organization as Code is what enables level 4. Not by making actors smarter, but by making the system around them deterministic, steerable, and debuggable.
+Organization as Code is what closes that gap. Not by making actors smarter, but by making the system around them deterministic, steerable, and debuggable.
 
 ## OrgLoop
 
@@ -251,6 +250,3 @@ orgloop start
 
 You just installed my engineering organization. The routes are running. Events are flowing. Your actors are waking with focused SOPs. The org loops. 🧬
 
----
-
-*Charlie Hulcher is a founding engineer at Kindo, where he builds AI-powered enterprise software. He runs an autonomous engineering organization using OpenClaw, Claude Code, and a growing cast of AI actors, held together by Organization as Code.*

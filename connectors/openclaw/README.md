@@ -1,6 +1,6 @@
 # @orgloop/connector-openclaw
 
-Delivers OrgLoop events to an OpenClaw agent via HTTP webhook. This is a **target-only** connector (actor) -- it sends events outbound, it does not receive them.
+Delivers OrgLoop events to an OpenClaw agent via HTTP webhook. This is a **target-only** connector — it delivers events from OrgLoop to OpenClaw (via POST to the OpenClaw API). It does not act as a source.
 
 ## Install
 

@@ -6,6 +6,10 @@
 
 **Organization as Code -- declarative event routing for autonomous AI organizations.**
 
+🧬 OrgLoop is a declarative runtime for autonomous AI organizations. You define event sources, actors, routes, and standard operating procedures in YAML. When something happens — a PR merges, a customer emails, CI fails — OrgLoop matches the event to a route and wakes the right actor with a focused prompt for exactly what to do.
+
+OrgLoop is open-ended and open source. Build your organization embracing all of your specialized agents: Claude Code Team implementers, OpenClaw supervisors, Deep Research lone wolves. Connect GitHub with Salesforce and Gmail. Whatever you want — use an existing connector or contribute one. Then see all your business processes — information flows, event handling prompts, transforms — in one place. Declarative and reproducible.
+
 > You don't need reliable actors if you have a reliable system around them.
 
 AI agents forget, idle, rabbit-hole, drop context. OrgLoop doesn't fix the agents -- it makes the *system* reliable. When a resource changes state, the right actor is woken with the right context. When that actor finishes, its completion is itself an event, routed to the next actor. **The org loops.**
@@ -136,7 +140,7 @@ loggers:
 
 ## Why OrgLoop
 
-- **Event-driven, not cron-driven** -- actors wake when something happens, not on a timer
+- **Event-driven actor model** -- sources may poll, but actors never do. Actors wake only when a matched event arrives — no timers, no scanning, no idle loops.
 - **Declarative topology** -- your org's wiring lives in version control
 - **Recursive loop** -- actor completion feeds back as events, triggering the next cycle
 - **Pluggable everything** -- swap GitHub for GitLab, OpenClaw for a custom agent

@@ -5,7 +5,11 @@ description: Organization as Code — declarative event routing for autonomous A
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-**Organization as Code -- declarative event routing for autonomous AI organizations. You don't need reliable actors if you have a reliable system around them.**
+**Organization as Code -- declarative event routing for autonomous AI organizations.**
+
+🧬 OrgLoop is a declarative runtime for autonomous AI organizations. You define event sources, actors, routes, and standard operating procedures in YAML. When something happens — a PR merges, a customer emails, CI fails — OrgLoop matches the event to a route and wakes the right actor with a focused prompt for exactly what to do.
+
+> You don't need reliable actors if you have a reliable system around them.
 
 [Get Started](/start/getting-started/) | [View on GitHub](https://github.com/c-h-/orgloop)
 
@@ -47,7 +51,7 @@ Source.poll() --> EventBus --> matchRoutes() --> Transforms --> Actor.deliver()
                                                                      (the loop)
 ```
 
-When an actor finishes work, that completion is itself an event -- routed back into the system to trigger the next actor. The organization sustains itself through continuous cycles. That's OrgLoop.
+When an actor finishes work, that completion is itself an event — routed back into the system to trigger the next actor. The organization sustains itself through continuous cycles.
 
 ## Core Concepts
 
@@ -55,8 +59,8 @@ When an actor finishes work, that completion is itself an event -- routed back i
 	<Card title="Five Primitives" icon="setting">
 		**Sources** emit events, **Actors** do work, **Routes** wire them together, **Transforms** filter and enrich, **Loggers** observe everything. [Learn more](/concepts/five-primitives/).
 	</Card>
-	<Card title="Event-Driven" icon="rocket">
-		Actors wake when something happens, not on a timer. Every state change triggers a deterministic, focused response with a situational launch prompt.
+	<Card title="Event-Driven Actors" icon="rocket">
+		Sources poll or listen; actors never do. Actors wake only when matched events arrive — each with a focused launch prompt for that specific situation.
 	</Card>
 	<Card title="The Loop" icon="sync">
 		Actor completion feeds back as events. A dev agent finishes, the supervisor evaluates, relaunches if needed. The org loops.
