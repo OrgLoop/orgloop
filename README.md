@@ -6,7 +6,7 @@
 
 **Organization as Code -- declarative event routing for autonomous AI organizations.**
 
-🧬 OrgLoop is a declarative runtime for autonomous AI organizations. You define event sources, actors, routes, and standard operating procedures in YAML. When something happens: a PR merges, a customer emails, Claude Code stops working. OrgLoop matches the event to a route and wakes the right actor with a focused prompt for exactly what to do.
+🧬 OrgLoop is a declarative runtime for autonomous AI organizations. You define event sources, actors, routes, and standard operating procedures in YAML. When a PR merges, a customer emails, or Claude Code stops working, OrgLoop matches the event to a route and wakes the right actor with a focused prompt for exactly what to do.
 
 When that actor finishes, its completion fires an event back into the system, and the loop continues. Events are generated programmatically and flow through deterministic routing, not chat threads. You are not dependent on a heartbeat eventually finding the right state, an Agent remembering to call a tool, nor a patrol coming across something important.
 
