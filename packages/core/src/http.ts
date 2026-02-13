@@ -65,7 +65,12 @@ export class WebhookServer {
 		const srv = this.server;
 		if (!srv) return;
 		return new Promise((resolve) => {
+			// Force-close lingering connections after 5s so shutdown doesn't hang
+			const timeout = setTimeout(() => {
+				srv.closeAllConnections();
+			}, 5_000);
 			srv.close(() => {
+				clearTimeout(timeout);
 				this.server = null;
 				resolve();
 			});
@@ -185,7 +190,9 @@ export class WebhookServer {
 			// POST /control/shutdown
 			if (req.method === 'POST' && route === 'shutdown') {
 				this.jsonResponse(res, 200, { ok: true });
-				await this._runtime.stop();
+				// Defer stop so the HTTP response flushes before server teardown
+				const rt = this._runtime;
+				setImmediate(() => void rt.stop());
 				return;
 			}
 
