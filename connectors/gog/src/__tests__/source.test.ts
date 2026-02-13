@@ -144,33 +144,32 @@ describe('GogSource', () => {
 	// ─── History-Based Polling ──────────────────────────────────────────────
 
 	describe('history-based polling', () => {
-		it('bootstraps on first poll (no checkpoint) with search then history', async () => {
+		it('bootstraps on first poll (no checkpoint) — records seen IDs without emitting', async () => {
 			const source = await createSource();
 			const msg = makeMessage();
 
-			let callCount = 0;
 			mockExecGog(source, async (args) => {
-				callCount++;
 				if (args.includes('messages') && args.includes('search')) {
 					// Bootstrap search
 					return [msg];
-				}
-				if (args.includes('history') && args.includes('--max') && args.includes('1')) {
-					// Get initial historyId
-					return { history: [], historyId: '99999' };
 				}
 				return { history: [], historyId: '99999' };
 			});
 
 			const result = await source.poll(null);
 
-			expect(result.events.length).toBe(1);
-			expect(result.events[0].provenance.platform_event).toBe('email.received');
-			expect(result.events[0].payload.message_id).toBe('msg-001');
+			// Bootstrap should NOT emit events (epoch pattern: establish high-water mark only)
+			expect(result.events.length).toBe(0);
 
 			const cp = JSON.parse(result.checkpoint);
 			expect(cp.mode).toBe('search');
 			expect(cp.lastPollTimestamp).toBeDefined();
+
+			// But the message should be recorded as seen
+			// Verify by doing a second poll that returns the same message
+			mockExecGog(source, async () => [msg]);
+			const result2 = await source.poll(result.checkpoint);
+			expect(result2.events.length).toBe(0); // deduped
 		});
 
 		it('processes messagesAdded from history records', async () => {
@@ -278,18 +277,14 @@ describe('GogSource', () => {
 				if (args.includes('messages') && args.includes('search')) {
 					return [msg];
 				}
-				if (args.includes('history') && args.includes('--max') && args.includes('1')) {
-					return { history: [], historyId: '50000' };
-				}
 				return { history: [], historyId: '50000' };
 			});
 
 			const checkpoint = JSON.stringify({ mode: 'history', historyId: '1' });
 			const result = await source.poll(checkpoint);
 
-			// Should have re-bootstrapped
-			expect(result.events.length).toBe(1);
-			expect(result.events[0].payload.message_id).toBe('msg-fresh');
+			// Re-bootstrap records seen IDs but does not emit (epoch pattern)
+			expect(result.events.length).toBe(0);
 			const cp = JSON.parse(result.checkpoint);
 			expect(cp.mode).toBe('search');
 			expect(cp.lastPollTimestamp).toBeDefined();
@@ -359,17 +354,14 @@ describe('GogSource', () => {
 
 	describe('event normalization', () => {
 		it('parses email address headers correctly', async () => {
-			const source = await createSource();
+			const source = await createSource({ query: 'label:inbox' });
 			const msg = makeMessage({
 				from: '"Jane Doe" <jane@acme.com>',
 				to: 'Alice <alice@example.com>, Bob <bob@example.com>',
 				cc: 'Alice <alice@example.com>',
 			});
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) return [msg];
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg]);
 
 			const result = await source.poll(null);
 
@@ -385,16 +377,13 @@ describe('GogSource', () => {
 		});
 
 		it('includes body when fetch_body is true and body is present', async () => {
-			const source = await createSource({ fetch_body: true });
+			const source = await createSource({ query: 'label:inbox', fetch_body: true });
 			const msg = makeMessage({
 				bodyText: 'Hello, world!',
 				bodyHtml: '<p>Hello, world!</p>',
 			});
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) return [msg];
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg]);
 
 			const result = await source.poll(null);
 
@@ -403,16 +392,13 @@ describe('GogSource', () => {
 		});
 
 		it('sets correct provenance fields', async () => {
-			const source = await createSource();
+			const source = await createSource({ query: 'label:inbox' });
 			const msg = makeMessage({
 				from: 'sender@example.com',
 				threadId: 'thread-abc',
 			});
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) return [msg];
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg]);
 
 			const result = await source.poll(null);
 
@@ -426,13 +412,10 @@ describe('GogSource', () => {
 		});
 
 		it('uses sourceId from config, not connector id', async () => {
-			const source = await createSource();
+			const source = await createSource({ query: 'label:inbox' });
 			const msg = makeMessage();
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) return [msg];
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg]);
 
 			const result = await source.poll(null);
 
@@ -533,15 +516,12 @@ describe('GogSource', () => {
 			const cachePath = join(cacheDir, 'gog-test-seen-ids.json');
 			writeFileSync(cachePath, '{{not valid json}}');
 
-			const source = await createSource();
+			const source = await createSource({ query: 'label:inbox' });
 			const msg = makeMessage();
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) return [msg];
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg]);
 
-			// Should not throw
+			// Should not throw — corrupt cache is discarded, message emitted normally
 			const result = await source.poll(null);
 			expect(result.events.length).toBe(1);
 		});
@@ -564,6 +544,32 @@ describe('GogSource', () => {
 
 			await source.shutdown();
 			expect(existsSync(cachePath)).toBe(true);
+		});
+
+		it('does not re-emit bootstrap messages after restart (WQ-90 regression)', async () => {
+			// Simulate first run: bootstrap records seen IDs and saves cache
+			const source1 = await createSource();
+			const msg = makeMessage({ id: 'msg-stale', subject: 'Old email' });
+
+			mockExecGog(source1, async (args) => {
+				if (args.includes('messages') && args.includes('search')) return [msg];
+				return { history: [], historyId: '10000' };
+			});
+
+			const result1 = await source1.poll(null);
+			expect(result1.events.length).toBe(0); // bootstrap: no events emitted
+			await source1.shutdown(); // persists seen cache
+
+			// Simulate restart: new source instance loads cache from disk
+			const source2 = await createSource({ query: 'label:inbox' });
+
+			// Gmail returns the same message
+			mockExecGog(source2, async () => [msg]);
+
+			const result2 = await source2.poll(result1.checkpoint);
+
+			// msg-stale should be deduped — it was recorded during bootstrap
+			expect(result2.events.length).toBe(0);
 		});
 	});
 
@@ -673,17 +679,12 @@ describe('GogSource', () => {
 
 	describe('multiple messages', () => {
 		it('processes multiple new messages in a single poll', async () => {
-			const source = await createSource();
+			const source = await createSource({ query: 'label:inbox' });
 			const msg1 = makeMessage({ id: 'msg-1', subject: 'First' });
 			const msg2 = makeMessage({ id: 'msg-2', subject: 'Second' });
 			const msg3 = makeMessage({ id: 'msg-3', subject: 'Third' });
 
-			mockExecGog(source, async (args) => {
-				if (args.includes('messages') && args.includes('search')) {
-					return [msg1, msg2, msg3];
-				}
-				return { history: [], historyId: '10000' };
-			});
+			mockExecGog(source, async () => [msg1, msg2, msg3]);
 
 			const result = await source.poll(null);
 

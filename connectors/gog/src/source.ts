@@ -159,7 +159,9 @@ export class GogSource implements SourceConnector {
 		const events: OrgLoopEvent[] = [];
 
 		if (!cp.historyId) {
-			// Bootstrap: get current profile to obtain latest historyId
+			// Bootstrap: record current messages as seen without emitting events.
+			// This establishes the high-water mark so only genuinely new emails
+			// are emitted on subsequent polls (prevents stale emails on restart).
 			const bootstrapResult = await this.execGog([
 				'gmail',
 				'messages',
@@ -171,11 +173,7 @@ export class GogSource implements SourceConnector {
 			const bootstrapMessages = this.parseMessages(bootstrapResult);
 
 			for (const msg of bootstrapMessages) {
-				const event = await this.messageToEvent(msg);
-				if (event) {
-					events.push(event);
-					this.seenIds.add(msg.id);
-				}
+				this.seenIds.add(msg.id);
 			}
 
 			// We can't call `gog gmail history` without an existing historyId,
@@ -183,7 +181,7 @@ export class GogSource implements SourceConnector {
 			// will use search with dedup until we obtain a real historyId.
 			this.saveSeenCache();
 			return {
-				events,
+				events: [],
 				checkpoint: JSON.stringify({
 					mode: 'search',
 					lastPollTimestamp: new Date().toISOString(),
