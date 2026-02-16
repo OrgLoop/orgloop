@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/logger-file",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "OrgLoop file logger — JSONL with rotation",
   "type": "module",
   "main": "dist/index.js",

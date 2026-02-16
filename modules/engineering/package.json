@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/module-engineering",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Engineering organization workflow module — PR review, CI failure, Linear triage, Claude Code supervision",
   "type": "module",
   "main": "orgloop-module.yaml",

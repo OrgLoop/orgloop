@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/sdk",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "OrgLoop plugin development kit — interfaces, base classes, and test harnesses",
   "type": "module",
   "main": "dist/index.js",

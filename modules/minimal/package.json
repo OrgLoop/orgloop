@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/module-minimal",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Minimal OrgLoop module — 1 webhook source, 1 generic actor, 1 example route",
   "type": "module",
   "main": "orgloop-module.yaml",
