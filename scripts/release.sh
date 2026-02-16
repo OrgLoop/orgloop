@@ -115,6 +115,7 @@ PUBLISH_ORDER=(
   "transforms/filter"
   "transforms/dedup"
   "transforms/enrich"
+  "transforms/agent-gate"
   "loggers/console"
   "loggers/file"
   "loggers/otel"
