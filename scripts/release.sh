@@ -110,6 +110,8 @@ PUBLISH_ORDER=(
   "connectors/openclaw"
   "connectors/webhook"
   "connectors/cron"
+  "connectors/agent-ctl"
+  "connectors/docker"
   "transforms/filter"
   "transforms/dedup"
   "transforms/enrich"
