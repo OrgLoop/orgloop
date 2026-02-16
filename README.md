@@ -124,7 +124,7 @@ routes:
       events: [resource.changed]
     transforms:
       - transforms/drop-bot-noise.sh
-      - transforms/injection-scanner.sh
+      - transforms/dedup.sh
     then: { actor: openclaw-engineering-agent }
 
   - name: claude-code-to-supervisor
@@ -209,7 +209,7 @@ orgloop module reload engineering
 
 ## Status
 
-Early release. The concepts behind OrgLoop have been running in production since January 2026 -- managing a real engineering organization with GitHub, Linear, Claude Code, and OpenClaw. The framework is being extracted and formalized from that battle-tested system.
+Alpha. The concepts behind OrgLoop have been running in production since January 2026 — managing a real engineering organization with GitHub, Linear, Claude Code, and OpenClaw. The framework is being extracted and formalized from that system.
 
 If this is interesting to you, star and watch the repo. Contributions welcome.
 
@@ -224,3 +224,7 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 ## License
 
 [MIT License](LICENSE.md)
+
+---
+
+Built by [Charlie Hulcher](https://github.com/c-h-) — running in production at [Kindo](https://kindo.ai).

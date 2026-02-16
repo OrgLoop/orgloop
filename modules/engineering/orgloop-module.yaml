@@ -85,4 +85,4 @@ parameters:
 provides:
   routes: 5
   transforms: 3
-  sops: 3
+  sops: 4

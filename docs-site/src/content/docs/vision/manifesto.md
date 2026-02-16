@@ -82,7 +82,7 @@ actors:
 routes:
   - name: "PR review -> Engineering"
     when: { source: github, events: [resource.changed] }
-    transforms: [drop-bot-noise, injection-scanner]
+    transforms: [drop-bot-noise, dedup]
     then: { actor: engineering }
     with: { prompt_file: "./sops/pr-review.md" }
 
@@ -144,6 +144,14 @@ routes:
 
 The dev agent is both an actor (it does work) and a source (its completion emits events). The supervisor evaluates, relaunches, and its own completion feeds back in. The organization sustains itself through continuous cycles of events triggering actors triggering events.
 
+## What This Looks Like Running
+
+I've been running this system for my own engineering org — 6 connectors (GitHub, Linear, Claude Code, OpenClaw, Gmail, cron), two route groups covering engineering and product workflows, 9 SOPs. The framework you're reading about was extracted from that setup.
+
+A typical night: a PR gets a review comment at 2am. The GitHub source catches it, the route matches, the agent wakes with the PR review SOP and addresses the feedback — pushes fixes, re-requests review. If CI breaks on that push, the CI failure route catches it and the agent wakes again with a different SOP. When a Claude Code session finishes at 3am, the hook fires, the supervisor evaluates, and relaunches for QA if the work is ready. Each completion triggers the next step. That's the loop in practice.
+
+The full pipeline — Linear ticket through to feedback-addressed, CI-passing PR — runs without a human in the loop. So does email triage, and a cron-scheduled weekly product update that synthesizes GitHub and Linear activity into a summary for the team.
+
 ## Launch Prompts: Skills for Events
 
 Notice the `with` on those routes. That's a **launch prompt** — a focused SOP delivered alongside the event, telling the actor exactly what to do in this specific situation. The actor doesn't just get *notified* that something happened. It gets a scoped SOP for exactly what happened.
@@ -183,7 +191,19 @@ Same actor, different prompts per route. The routing layer decides which SOP is 
 
 Infrastructure as Code didn't just make servers easier to manage. It created an entirely new category of tooling, visibility, and capability. Organization as Code does the same.
 
-**A common pattern for your entire organization.** That engineering pipeline I showed? The same YAML structure works for any process where events trigger work:
+**Installable Autonomous Organizations.** This is where it gets interesting. Think about what a module actually is: it's an entire operational workflow, packaged as code. My engineering org -- the sources, routes, transforms, SOPs, and a manifest declaring every dependency down to the API tokens and external services -- is a module you can install. The module doesn't just give you YAML files. It declares the full truth about what it needs, and OrgLoop tells you exactly what's missing and how to get it. Install the module, follow the guidance, start. You just cloned a functioning autonomous engineering department.
+
+These aren't templates. They're complete operational topologies with declared dependencies — installable autonomous organizations. Your org config is code: version it, diff it, clone it, deploy it. And if a dependency isn't ready yet — an actor isn't running, a service isn't installed — the system doesn't break. Events queue. The routing layer keeps working. You add the missing piece when you're ready, and everything catches up.
+
+**A foundation for observability.** Every event flows through OrgLoop with a trace ID. What's in flight, what's stalled, what's completing, what's failing, across every business process. This is the foundation for the oversight layer that lets you manage at the level of objectives, not individual agent sessions.
+
+**Launch prompts that scale.** Route-paired SOPs mean your actors get sharper as your org grows more complex, not duller. Twenty routes means twenty focused instructions, not one bloated system prompt.
+
+**Open-ended by design.** Connectors, transforms, and loggers are independently publishable packages. GitHub today, Salesforce tomorrow, your internal tools next week — whatever you want, use an existing connector or contribute one. No approval needed, no registry gatekeeping. OrgLoop isn't limited to the connectors that exist today. The system is a platform, not a product with a fixed integration list.
+
+**Security as a first-class concern.** Transforms give you a standardized place to implement security policy: prompt injection scanning, provenance-based filtering, rate limiting. Declared in your org spec and auditable.
+
+**A common pattern beyond engineering.** The same YAML structure works for any process where events trigger work. Now imagine where this goes:
 
 ```yaml
 # HR: New hire in Workday -> onboarding agent drafts welcome email + provisions accounts
@@ -202,21 +222,7 @@ Infrastructure as Code didn't just make servers easier to manage. It created an 
   with: { prompt_file: "./sops/p1-triage.md" }
 ```
 
-Same five primitives. Different connectors. The engineering org is the proof case, not the ceiling.
-
-**A foundation for observability.** Every event flows through OrgLoop with a trace ID. What's in flight, what's stalled, what's completing, what's failing, across every business process. This is the foundation for the oversight layer that lets you manage at the level of objectives, not individual agent sessions.
-
-**Launch prompts that scale.** Route-paired SOPs mean your actors get sharper as your org grows more complex, not duller. Twenty routes means twenty focused instructions, not one bloated system prompt.
-
-**Open-ended by design.** Connectors, transforms, and loggers are independently publishable packages. GitHub today, Salesforce tomorrow, your internal tools next week — whatever you want, use an existing connector or contribute one. No approval needed, no registry gatekeeping. OrgLoop isn't limited to the connectors that exist today. The system is a platform, not a product with a fixed integration list.
-
-**Installable Autonomous Organizations.** This is where it gets interesting. Think about what a module actually is: it's an entire operational workflow, packaged as code. My engineering org -- the sources, routes, transforms, SOPs, and a manifest declaring every dependency down to the API tokens and external services -- is a module you can install. The module doesn't just give you YAML files. It declares the full truth about what it needs, and OrgLoop tells you exactly what's missing and how to get it. Install the module, follow the guidance, start. You just cloned a functioning autonomous engineering department.
-
-Scale that idea. Someone builds a customer support flow — Zendesk + Intercom + triage routes + escalation SOPs — and publishes it as a module. You install it, configure your credentials, and the organization runs. Someone else packages an entire DevOps org: PagerDuty + Datadog + runbook agents + incident response routes. Install, configure, run.
-
-These aren't templates. They're complete operational topologies with declared dependencies — installable autonomous organizations. Your org config is code: version it, diff it, clone it, deploy it. And if a dependency isn't ready yet — an actor isn't running, a service isn't installed — the system doesn't break. Events queue. The routing layer keeps working. You add the missing piece when you're ready, and everything catches up.
-
-**Security as a first-class concern.** Transforms give you a standardized place to implement security policy: prompt injection scanning, provenance-based filtering, rate limiting. Declared in your org spec and auditable.
+Same five primitives. Different connectors. The engineering org is the proof case, not the ceiling. Someone builds a customer support flow — Zendesk + Intercom + triage routes + escalation SOPs — and publishes it as a module. Someone else packages an entire DevOps org: PagerDuty + Datadog + runbook agents + incident response routes. Install, configure, run.
 
 ## The Autonomy Ladder
 
@@ -228,11 +234,13 @@ The real question: can I define an objective and have event sources acted on fro
 
 Organization as Code is what closes that gap. Not by making actors smarter, but by making the system around them deterministic, steerable, and debuggable.
 
+## Where We Are
+
+Alpha. The framework is extracted from the production system described above. Module packaging works — `@orgloop/module-engineering` is on npm and installs with `orgloop add module engineering`. Single-process, single-machine runtime today. Distributed execution is on the roadmap, but a single machine handles a real engineering org's event volume fine.
+
 ## OrgLoop
 
 I'm building this in the open. The reference implementation is called **OrgLoop**, because the defining feature is the loop.
-
-It's already proven. My "ticket to human-caliber PR" pipeline runs autonomously: Linear ticket to feedback-addressed, CI-passing, QA-evidence-attached pull request, no human in the loop. When a PR gets a review comment at 2am, the poller catches it, wakes the OpenClaw agent with the PR review SOP, OpenClaw launches a Claude Code Team when appropriate, and feedback is addressed. When the Claude Code Team finishes at 3am, the hook fires, the supervisor evaluates, and relaunches for QA. I have the confidence to scale the rest of the org without forgetting how the wiring works.
 
 The agents aren't the problem. The system around them is.
 
@@ -240,11 +248,8 @@ The agents aren't the problem. The system around them is.
 
 **OrgLoop is open source under the MIT license.** Read the code, run it, build on it, contribute to it.
 
-The demo I'm building toward:
-
 ```bash
 npm install -g @orgloop/cli
-npm install @orgloop/module-engineering
 orgloop add module engineering
 # orgloop doctor tells you what's needed and how to get it
 orgloop start
