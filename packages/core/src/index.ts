@@ -31,6 +31,9 @@ export { LoggerManager } from './logger.js';
 export type { ModuleConfig, ModuleContext } from './module-instance.js';
 // Module system
 export { ModuleInstance } from './module-instance.js';
+export type { StripFrontMatterResult } from './prompt.js';
+// Prompt utilities
+export { stripFrontMatter } from './prompt.js';
 export { ModuleRegistry } from './registry.js';
 export type { MatchedRoute } from './router.js';
 // Router
@@ -51,29 +54,6 @@ export {
 	InMemoryCheckpointStore,
 	InMemoryEventStore,
 } from './store.js';
+export type { TransformPipelineOptions, TransformPipelineResult } from './transform.js';
 // Transform pipeline
 export { executeTransformPipeline } from './transform.js';
-export type { TransformPipelineOptions, TransformPipelineResult } from './transform.js';
-
-// Logger manager
-export { LoggerManager } from './logger.js';
-
-// Scheduler
-export { Scheduler } from './scheduler.js';
-
-// HTTP webhook server
-export { WebhookServer, DEFAULT_HTTP_PORT } from './http.js';
-export type { RuntimeControl } from './http.js';
-
-// Runtime (new architecture)
-export { Runtime } from './runtime.js';
-export type { RuntimeOptions, LoadModuleOptions } from './runtime.js';
-
-// Prompt utilities
-export { stripFrontMatter } from './prompt.js';
-export type { StripFrontMatterResult } from './prompt.js';
-
-// Module system
-export { ModuleInstance } from './module-instance.js';
-export type { ModuleConfig, ModuleContext } from './module-instance.js';
-export { ModuleRegistry } from './registry.js';
