@@ -88,3 +88,5 @@ routes:
       config:
         session_key: "orgloop:{{ params.claude_code_source }}:supervisor"
         wake_mode: now
+    with:
+      prompt_file: "{{ module.path }}/sops/claude-code-supervisor.md"
