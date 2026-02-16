@@ -24,6 +24,12 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.2)
 
+  connectors/agent-ctl:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   connectors/claude-code:
     dependencies:
       '@orgloop/sdk':
@@ -31,6 +37,12 @@ importers:
         version: link:../../packages/sdk
 
   connectors/cron:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  connectors/docker:
     dependencies:
       '@orgloop/sdk':
         specifier: workspace:*
@@ -120,12 +132,18 @@ importers:
 
   packages/cli:
     dependencies:
+      '@orgloop/connector-agent-ctl':
+        specifier: workspace:*
+        version: link:../../connectors/agent-ctl
       '@orgloop/connector-claude-code':
         specifier: workspace:*
         version: link:../../connectors/claude-code
       '@orgloop/connector-cron':
         specifier: workspace:*
         version: link:../../connectors/cron
+      '@orgloop/connector-docker':
+        specifier: workspace:*
+        version: link:../../connectors/docker
       '@orgloop/connector-github':
         specifier: workspace:*
         version: link:../../connectors/github

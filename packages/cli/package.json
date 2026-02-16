@@ -16,8 +16,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@orgloop/connector-agent-ctl": "workspace:*",
     "@orgloop/connector-claude-code": "workspace:*",
     "@orgloop/connector-cron": "workspace:*",
+    "@orgloop/connector-docker": "workspace:*",
     "@orgloop/connector-github": "workspace:*",
     "@orgloop/connector-gog": "workspace:*",
     "@orgloop/connector-linear": "workspace:*",
