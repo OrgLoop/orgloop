@@ -389,7 +389,7 @@ describe('engineering module', () => {
 		expect(manifest.kind).toBe('Module');
 		expect(manifest.metadata.name).toBe('engineering');
 		expect(manifest.provides?.routes).toBe(5);
-		expect(manifest.provides?.sops).toBe(3);
+		expect(manifest.provides?.sops).toBe(4);
 	});
 
 	it('expands engineering module routes with params', async () => {
