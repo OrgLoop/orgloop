@@ -160,6 +160,8 @@ Same actor, different prompts per route. The routing layer decides which SOP is 
 
 **Actors stay focused.** No more scanning broadly for anything that might need attention. Each wake is one job, one SOP, one lifetime.
 
+**Proven in production.** This isn't theoretical. OrgLoop has been running a real startup's engineering organization since January 2026 — handling PR reviews, CI failures, Claude Code supervision, ticket triage, email routing, and weekly updates autonomously. The framework you're looking at was extracted from that system. If you're already using Claude Code and OpenClaw, OrgLoop is the layer that wires them into a self-sustaining organization instead of a collection of tools you manually coordinate.
+
 **Composable workflows.** Connectors, transforms, and loggers are independently publishable packages. Anyone can build and share a connector for their platform.
 
 **Installable organizations.** Modules are entire operational workflows, packaged as code. The engineering org -- sources, routes, transforms, SOPs, and a manifest declaring every dependency -- is a module you can install. `orgloop add module engineering` gives you a functioning autonomous engineering department.
