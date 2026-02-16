@@ -144,17 +144,13 @@ routes:
 
 The dev agent is both an actor (it does work) and a source (its completion emits events). The supervisor evaluates, relaunches, and its own completion feeds back in. The organization sustains itself through continuous cycles of events triggering actors triggering events.
 
-## What This Looks Like in Production
+## What This Looks Like Running
 
-This isn't a design document. It's running.
+I've been running this system for my own engineering org — 6 connectors (GitHub, Linear, Claude Code, OpenClaw, Gmail, cron), two route groups covering engineering and product workflows, 9 SOPs. The framework you're reading about was extracted from that setup.
 
-A real startup's engineering organization has been running on these primitives for weeks. The production topology: 6 connectors (GitHub, Linear, Claude Code, OpenClaw, Gmail, cron), two route groups (engineering and product), 9 SOPs covering the full lifecycle — PR review, CI failure triage, Claude Code supervision, Linear ticket management, Gmail triage, weekly product updates.
+A typical night: a PR gets a review comment at 2am. The GitHub source catches it, the route matches, the agent wakes with the PR review SOP and addresses the feedback — pushes fixes, re-requests review. If CI breaks on that push, the CI failure route catches it and the agent wakes again with a different SOP. When a Claude Code session finishes at 3am, the hook fires, the supervisor evaluates, and relaunches for QA if the work is ready. Each completion triggers the next step. That's the loop in practice.
 
-Here's what a typical night looks like. A PR gets a review comment at 2am. The GitHub poller catches it within minutes. OrgLoop matches the event to the PR review route, wakes the OpenClaw agent with the PR review SOP, and feedback gets addressed — code changes pushed, reviewer re-requested. If CI fails on that push, the CI failure route catches it and wakes the agent again with the CI failure SOP. When the Claude Code implementation session finishes at 3am, the hook fires, the supervisor route evaluates the output, and relaunches for QA if the work is complete. No human touched anything. The org looped.
-
-The ticket-to-PR pipeline runs autonomously: Linear ticket → implementation → feedback-addressed, CI-passing pull request. PR review comments get handled overnight. CI failures get diagnosed and fixed. Claude Code sessions get supervised and relaunched. Gmail gets triaged. Weekly product updates get generated on a cron schedule.
-
-This is the system the framework was extracted from. Not a demo. Not a prototype. A working production system that handles the full loop for a real team.
+The full pipeline — Linear ticket through to feedback-addressed, CI-passing PR — runs without a human in the loop. So does email triage, and a cron-scheduled weekly product update that synthesizes GitHub and Linear activity into a summary for the team.
 
 ## Launch Prompts: Skills for Events
 
@@ -240,7 +236,7 @@ Organization as Code is what closes that gap. Not by making actors smarter, but 
 
 ## Where We Are
 
-Alpha. The framework is extracted from a working production system — the same one described in "What This Looks Like in Production" above. Module packaging works: `@orgloop/module-engineering` is published on npm and installs with `orgloop add module engineering`. Single-process, single-machine runtime today. Multi-process and distributed execution are on the roadmap, but the single-machine model handles a real engineering org's event volume without breaking a sweat.
+Alpha. The framework is extracted from the production system described above. Module packaging works — `@orgloop/module-engineering` is on npm and installs with `orgloop add module engineering`. Single-process, single-machine runtime today. Distributed execution is on the roadmap, but a single machine handles a real engineering org's event volume fine.
 
 ## OrgLoop
 

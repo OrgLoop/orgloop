@@ -1,10 +1,8 @@
 # @orgloop/module-engineering
 
-**A complete autonomous engineering organization, packaged as a module.**
+Engineering organization workflow module for OrgLoop. Wires GitHub, Linear, and Claude Code into a supervised loop through an OpenClaw agent — PR reviews get addressed, CI failures get fixed, tickets get triaged, and Claude Code sessions get evaluated and relaunched when they finish.
 
-You use Claude Code for implementation. You use OpenClaw to supervise it. OrgLoop is the layer that wires them together — so when a PR gets a review at 2am, Claude Code addresses the feedback, and when that session finishes, a supervisor evaluates the output and relaunches if needed. No human in the loop.
-
-This module gives you 5 routes, 4 SOPs, and the transforms to run an engineering org that handles PR reviews, CI failures, Linear ticket triage, and Claude Code supervision autonomously.
+5 routes, 4 SOPs, and 3 transforms. Install it, configure your connectors, and the engineering loop runs.
 
 ## Install
 
