@@ -137,7 +137,7 @@ routes:
           - pull_request_review_comment
     transforms:
       - ref: drop-bot-noise
-      - ref: injection-scanner
+      - ref: dedup
     then:
       actor: "{{ params.agent_actor }}"
       config:

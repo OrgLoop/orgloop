@@ -194,7 +194,6 @@ routes:
     transforms:
       - ref: drop-bot-noise       # Runs first
       - ref: dedup                 # Runs second (only sees non-bot events)
-      - ref: injection-scanner    # Runs third
     then:
       actor: openclaw-engineering-agent
 ```

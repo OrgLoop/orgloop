@@ -56,10 +56,10 @@ The `on_error` field controls what happens when a transform errors:
 
 ```yaml
 transforms:
-  - name: injection-scanner
-    type: package
-    package: "@orgloop/transform-injection-scanner"
-    on_error: drop    # If scanner fails, don't deliver the event
+  - name: payload-validator
+    type: script
+    script: ./transforms/validate-payload.sh
+    on_error: drop    # If validator fails, don't deliver the event
 ```
 
 **Route-level override** (applies only to this route, overrides definition-level):
@@ -71,7 +71,7 @@ routes:
       source: github-prs
       events: [resource.changed]
     transforms:
-      - ref: injection-scanner
+      - ref: payload-validator
         on_error: halt    # Override: halt pipeline instead of just dropping
     then:
       actor: openclaw-agent
