@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/transform-agent-gate",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "OrgLoop agent-gate transform — gates events on running agent sessions via agent-ctl",
   "type": "module",
   "main": "dist/index.js",
