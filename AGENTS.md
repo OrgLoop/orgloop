@@ -196,6 +196,41 @@ Three event types — minimal by design, always additive:
 
 Event IDs: `evt_` prefix. Trace IDs: `trc_` prefix. Payload is connector-specific (freeform JSON). The envelope is generic (id, timestamp, source, type, provenance).
 
+## ⚠️ Documentation Is a Ship Requirement
+
+**No PR is complete without updating all affected documentation.** This is not optional — OrgLoop's value depends entirely on people's ability to understand and use it. Shipping code without documentation is a failed delivery.
+
+### The Rule
+
+Every PR that changes behavior, config, CLI, architecture, or project structure MUST also update:
+
+1. **Docs website** (`docs-site/src/content/docs/`) — user-facing guides, concepts, references, examples
+2. **Spec files** (`docs-site/src/content/docs/spec/`) — design specification
+3. **README files** (root `README.md`, connector/package READMEs) — quick-start and overview
+4. **AGENTS.md** (this file) — if the change affects how agents work in this repo
+
+### What "affected documentation" means
+
+- **New feature/connector/transform** → new docs page + getting-started update + README + spec update
+- **Changed config schema** → reference/config-schema.md + spec/config-schema.md + examples
+- **Changed CLI behavior** → cli/command-reference.md + spec/cli-design.md
+- **Removed/renamed concept** → update EVERY page that references it (grep the docs-site directory)
+- **Changed project structure** → spec/repo-organization.md + getting-started + README
+
+### How to verify
+
+Before opening a PR, grep the docs for any terms you changed:
+```bash
+grep -r "old_term" docs-site/src/content/docs/ README.md */README.md
+```
+If there are hits, update them. Zero tolerance for stale docs.
+
+### Why this exists
+
+We shipped multiple PRs (package-native model, daemon resilience, smart polling) without updating the docs website or READMEs. The docs still reference removed concepts (modules). This erodes trust in the project. It stops here.
+
+---
+
 ## Spec Sync
 
 The [specification](https://orgloop.ai/spec/) is the source of truth for OrgLoop's design. Spec files live in `docs-site/src/content/docs/spec/`. When making structural changes (adding/removing/renaming primitives, changing interfaces, altering event flow, modifying config schema):
