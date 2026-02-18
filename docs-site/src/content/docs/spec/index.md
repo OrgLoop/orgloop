@@ -22,10 +22,12 @@ description: "OrgLoop engineering specification — the complete design document
 8. [API/SDK Runtime Modes](./runtime-modes/)
 9. [Built-in Transforms](./transforms/)
 10. [Built-in Loggers](./loggers/)
-11. [Modules](./modules/)
+11. [Project Model](./modules/)
 12. [Maturity Roadmap](./roadmap/)
 13. [Scope Boundaries & DX Vision](./scope-boundaries/)
-14. [Runtime & Module Lifecycle](./runtime-lifecycle/)
+14. [Runtime Lifecycle](./runtime-lifecycle/)
+
+> Section 11 describes the package-native project model (`package.json` + `orgloop.yaml`).
 
 ### Appendices
 
