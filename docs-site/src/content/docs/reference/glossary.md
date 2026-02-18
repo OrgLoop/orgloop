@@ -67,7 +67,7 @@ One of three [event types](#event-type). Represents a human or system message --
 
 ### Project
 
-A directory containing an `orgloop.yaml` config file and a `package.json` listing connector, transform, and logger dependencies. Projects are the unit of deployment in OrgLoop -- each project defines a complete organizational topology (sources, actors, routes, transforms, loggers, and SOPs). Projects are package-native: connectors are npm packages installed via `npm install`, not module manifests. See [User Guide](/start/user-guide/).
+A directory containing an `orgloop.yaml` config file and a `package.json` listing connector, transform, and logger dependencies. Projects are the unit of deployment in OrgLoop -- each project defines a complete organizational topology (sources, actors, routes, transforms, loggers, and SOPs). Projects are package-native: connectors, transforms, and loggers are npm packages installed via `npm install`. See [User Guide](/start/user-guide/).
 
 ### Organization as Code (OaC)
 
