@@ -54,7 +54,7 @@ When `orgloop start` runs:
 6. Load the resolved project config via `runtime.loadModule()` (internal API)
 7. Sources begin polling, routes are registered, actors are ready
 
-Internally, the project is loaded as a `ModuleInstance` -- this is an implementation detail. The user-facing concept is a project, not a module. The internal abstraction exists to keep the door open for future multi-project runtimes without breaking the current model.
+Internally, the project is loaded as a `ModuleInstance` -- this is an implementation detail. The internal abstraction exists to keep the door open for future multi-project runtimes without breaking the current model.
 
 ### Runtime Modes
 
@@ -176,7 +176,7 @@ The runtime architecture is designed with a networked future in mind, but explic
 | Application | Project workload |
 | Process | Source / Route / Actor |
 | Distributed Erlang | Networked runtime (future) |
-| Process registry | Internal module registry |
+| Process registry | Internal registry (`ModuleRegistry`) |
 
 **What we design for now:**
 - Project names are globally meaningful (not just host-local)
