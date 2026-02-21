@@ -60,8 +60,8 @@ export class OpenClawTarget implements ActorConnector {
 			agentId: this.agentId,
 			wakeMode: (routeConfig.wake_mode as string) ?? 'now',
 			deliver: routeConfig.deliver ?? false,
-			channel: this.defaultChannel,
-			to: this.defaultTo,
+			channel: (routeConfig.channel as string) ?? this.defaultChannel,
+			to: (routeConfig.to as string) ?? this.defaultTo,
 		};
 
 		const headers: Record<string, string> = {
