@@ -114,6 +114,8 @@ The `Runtime` owns the shared infrastructure (bus, scheduler, loggers, HTTP serv
 | `ModuleInstance` | `packages/core/src/module-instance.ts` | Per-module resource container. Sources, actors, transforms, lifecycle (loading/active/unloading/removed). |
 | `ModuleRegistry` | `packages/core/src/registry.ts` | Singleton module name registry. Prevents conflicts. |
 | `OrgLoop` | `packages/core/src/engine.ts` | Backward-compatible wrapper around Runtime. Single-module convenience API. |
+| Daemon Client | `packages/cli/src/daemon-client.ts` | HTTP client for communicating with a running daemon's control API. |
+| Module Registry (CLI) | `packages/cli/src/module-registry.ts` | Persistent module tracking (`~/.orgloop/modules.json`). Maps directories to loaded modules across CLI commands. |
 | `matchRoutes()` | `packages/core/src/router.ts` | Dot-path filtering, multi-route matching |
 | `executeTransformPipeline()` | `packages/core/src/transform.ts` | Sequential transforms, fail-open default |
 | `Scheduler` | `packages/core/src/scheduler.ts` | Poll intervals, graceful start/stop |
@@ -179,6 +181,8 @@ Every plugin type (connector, transform, logger) must be wired through the **ful
 | Runtime lifecycle (multi-module, shared infra) | `packages/core/src/__tests__/runtime.test.ts` | 11 |
 | Module registry (name conflicts, lookup) | `packages/core/src/__tests__/registry.test.ts` | 8 |
 | Module instance (lifecycle states, resource ownership) | `packages/core/src/__tests__/module-instance.test.ts` | 17 |
+| Multi-module runtime (load, unload, reload, events) | `packages/core/src/__tests__/multi-module-runtime.test.ts` | 9 |
+| Module registry CLI (persist, find, clear) | `packages/cli/src/__tests__/module-registry.test.ts` | 12 |
 
 When fixing a bug, add a regression test. When wiring a new plugin, add an engine-integration test.
 

@@ -21,6 +21,7 @@ import { registerLogsCommand } from './commands/logs.js';
 import { registerPlanCommand } from './commands/plan.js';
 import { registerRoutesCommand } from './commands/routes.js';
 import { registerServiceCommand } from './commands/service.js';
+import { registerShutdownCommand } from './commands/shutdown.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerStopCommand } from './commands/stop.js';
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
 	registerPlanCommand(program);
 	registerStartCommand(program);
 	registerStopCommand(program);
+	registerShutdownCommand(program);
 	registerStatusCommand(program);
 	registerLogsCommand(program);
 	registerTestCommand(program);

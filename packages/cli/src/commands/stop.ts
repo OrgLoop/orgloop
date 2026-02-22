@@ -1,29 +1,32 @@
 /**
- * orgloop stop — Stop the running runtime.
+ * orgloop stop — Stop the current module or the entire daemon.
  *
- * Tries graceful shutdown via control API first (POST /control/shutdown),
- * falls back to SIGTERM via PID file.
+ * Module-aware behavior:
+ * - In a project dir → unregister just this dir's module
+ * - If no other modules remain → also shut down the daemon
+ * - If other modules still running → daemon stays alive
+ *
+ * Use `orgloop shutdown` to unconditionally stop the daemon and all modules.
  */
 
 import { readFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
+import { resolveConfigPath } from '../config.js';
+import { isProcessRunning, shutdownDaemon, unloadModuleFromDaemon } from '../daemon-client.js';
+import {
+	clearModulesState,
+	findModuleByDir,
+	readModulesState,
+	unregisterModule,
+} from '../module-registry.js';
 import * as output from '../output.js';
 
 const PID_DIR = join(homedir(), '.orgloop');
 const PID_FILE = join(PID_DIR, 'orgloop.pid');
 const PORT_FILE = join(PID_DIR, 'runtime.port');
 const SHUTDOWN_TIMEOUT_MS = 10_000;
-
-function isProcessRunning(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
 
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
 	const start = Date.now();
@@ -44,93 +47,161 @@ async function cleanupFiles(): Promise<void> {
 	}
 }
 
-async function tryControlApiShutdown(port: number): Promise<boolean> {
-	try {
-		const res = await fetch(`http://127.0.0.1:${port}/control/shutdown`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			signal: AbortSignal.timeout(5_000),
-		});
-		return res.ok;
-	} catch {
-		return false;
+async function fullShutdown(pid: number, port: number | null, force: boolean): Promise<void> {
+	output.info(`Stopping OrgLoop daemon (PID ${pid})...`);
+
+	if (force) {
+		process.kill(pid, 'SIGKILL');
+		output.success('Force killed.');
+		await cleanupFiles();
+		await clearModulesState();
+		return;
 	}
+
+	// Try graceful shutdown via control API first
+	let apiShutdown = false;
+	if (port) {
+		output.info('Requesting graceful shutdown via control API...');
+		apiShutdown = await shutdownDaemon(port);
+	}
+
+	if (!apiShutdown) {
+		process.kill(pid, 'SIGTERM');
+		output.info('Sent SIGTERM, waiting for shutdown...');
+	}
+
+	const exited = await waitForExit(pid, SHUTDOWN_TIMEOUT_MS);
+	if (exited) {
+		output.success('Stopped.');
+	} else {
+		output.warn(`Process did not exit within ${SHUTDOWN_TIMEOUT_MS / 1000}s. Sending SIGKILL...`);
+		try {
+			process.kill(pid, 'SIGKILL');
+		} catch {
+			/* already dead */
+		}
+		output.success('Force killed.');
+	}
+
+	await cleanupFiles();
+	await clearModulesState();
 }
 
 export function registerStopCommand(program: Command): void {
 	program
 		.command('stop')
-		.description('Stop the running runtime')
+		.description('Stop the current module (or the daemon if it is the last module)')
 		.option('--force', 'Force kill with SIGKILL')
-		.action(async (opts) => {
+		.option('--all', 'Stop the daemon and all modules (alias for `orgloop shutdown`)')
+		.action(async (opts, cmd) => {
 			try {
-				let pidStr: string;
+				const globalOpts = cmd.parent?.opts() ?? {};
+
+				// Read PID file
+				let pid: number;
 				try {
-					pidStr = await readFile(PID_FILE, 'utf-8');
+					const pidStr = await readFile(PID_FILE, 'utf-8');
+					pid = Number.parseInt(pidStr.trim(), 10);
+					if (Number.isNaN(pid)) {
+						output.error(`Invalid PID in ${PID_FILE}`);
+						process.exitCode = 1;
+						return;
+					}
 				} catch {
 					output.info('OrgLoop is not running (no PID file found).');
-					return;
-				}
-
-				const pid = Number.parseInt(pidStr.trim(), 10);
-				if (Number.isNaN(pid)) {
-					output.error(`Invalid PID in ${PID_FILE}`);
-					process.exitCode = 1;
 					return;
 				}
 
 				if (!isProcessRunning(pid)) {
 					output.info('OrgLoop is not running (stale PID file).');
 					await cleanupFiles();
+					await clearModulesState();
 					return;
 				}
 
-				output.info(`Stopping OrgLoop (PID ${pid})...`);
-
-				if (opts.force) {
-					process.kill(pid, 'SIGKILL');
-					output.success('Force killed.');
-					await cleanupFiles();
-				} else {
-					// Try graceful shutdown via control API first
-					let apiShutdown = false;
-					try {
-						const portStr = await readFile(PORT_FILE, 'utf-8');
-						const port = Number.parseInt(portStr.trim(), 10);
-						if (!Number.isNaN(port)) {
-							output.info('Requesting graceful shutdown via control API...');
-							apiShutdown = await tryControlApiShutdown(port);
-						}
-					} catch {
-						// No port file — fall through to SIGTERM
-					}
-
-					if (!apiShutdown) {
-						// Fallback to SIGTERM
-						process.kill(pid, 'SIGTERM');
-						output.info('Sent SIGTERM, waiting for shutdown...');
-					}
-
-					const exited = await waitForExit(pid, SHUTDOWN_TIMEOUT_MS);
-					if (exited) {
-						output.success('Stopped.');
-					} else {
-						output.warn(
-							`Process did not exit within ${SHUTDOWN_TIMEOUT_MS / 1000}s. Sending SIGKILL...`,
-						);
-						try {
-							process.kill(pid, 'SIGKILL');
-						} catch {
-							/* already dead */
-						}
-						output.success('Force killed.');
-					}
-
-					await cleanupFiles();
+				// Read port for control API
+				let port: number | null = null;
+				try {
+					const portStr = await readFile(PORT_FILE, 'utf-8');
+					port = Number.parseInt(portStr.trim(), 10);
+					if (Number.isNaN(port)) port = null;
+				} catch {
+					// No port file
 				}
 
-				if (output.isJsonMode()) {
-					output.json({ stopped: true, pid });
+				// If --all flag, do full shutdown
+				if (opts.all) {
+					await fullShutdown(pid, port, opts.force);
+					if (output.isJsonMode()) {
+						output.json({ stopped: true, pid, all: true });
+					}
+					return;
+				}
+
+				// Module-aware stop: determine which module this directory owns
+				const configPath = resolveConfigPath(globalOpts.config as string | undefined);
+				const projectDir = resolve(dirname(configPath));
+				const registeredModule = await findModuleByDir(projectDir);
+
+				if (!registeredModule) {
+					// No registered module for this directory — fall back to full shutdown
+					output.warn('No module registered for this directory. Stopping the daemon.');
+					await fullShutdown(pid, port, opts.force);
+					if (output.isJsonMode()) {
+						output.json({ stopped: true, pid, all: true });
+					}
+					return;
+				}
+
+				// Check how many modules are registered
+				const state = await readModulesState();
+				const moduleCount = state.modules.length;
+
+				if (moduleCount <= 1) {
+					// Last module — shut down the daemon entirely
+					output.info(
+						`Module "${registeredModule.name}" is the last module. Shutting down daemon.`,
+					);
+					await fullShutdown(pid, port, opts.force);
+					if (output.isJsonMode()) {
+						output.json({
+							stopped: true,
+							pid,
+							module: registeredModule.name,
+							daemonStopped: true,
+						});
+					}
+					return;
+				}
+
+				// Multiple modules — unload just this one
+				if (port) {
+					try {
+						output.info(`Unloading module "${registeredModule.name}"...`);
+						await unloadModuleFromDaemon(port, registeredModule.name);
+						await unregisterModule(registeredModule.name);
+						output.success(
+							`Module "${registeredModule.name}" stopped. Daemon continues with ${moduleCount - 1} module(s).`,
+						);
+
+						if (output.isJsonMode()) {
+							output.json({
+								stopped: true,
+								module: registeredModule.name,
+								daemonStopped: false,
+								remainingModules: moduleCount - 1,
+							});
+						}
+					} catch (err) {
+						output.error(
+							`Failed to unload module: ${err instanceof Error ? err.message : String(err)}`,
+						);
+						process.exitCode = 1;
+					}
+				} else {
+					// No control API available — fall back to full shutdown
+					output.warn('Control API not available. Stopping the daemon.');
+					await fullShutdown(pid, port, opts.force);
 				}
 			} catch (err) {
 				const errObj = err as NodeJS.ErrnoException;

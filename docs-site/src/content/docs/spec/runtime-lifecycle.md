@@ -3,7 +3,7 @@ title: "Runtime Lifecycle"
 description: "Runtime as a long-lived host process, project loading, daemon and supervised daemon modes, signal handling, state management, and the path to networked runtimes."
 ---
 
-> **Status: Implemented.** The runtime architecture is implemented in `packages/core/src/runtime.ts`, `packages/core/src/module-instance.ts`, and `packages/core/src/registry.ts`. The CLI operates in single-project mode -- `orgloop start` loads your project config into the runtime. Daemon mode (`--daemon`) and supervised daemon mode (`--daemon --supervised`) are implemented.
+> **Status: Implemented.** The runtime architecture is implemented in `packages/core/src/runtime.ts`, `packages/core/src/module-instance.ts`, and `packages/core/src/registry.ts`. The CLI supports **multi-module mode** -- multiple projects can share a single daemon. `orgloop start` detects a running daemon and registers additional modules via the control API. Daemon mode (`--daemon`) and supervised daemon mode (`--daemon --supervised`) are implemented.
 
 ### Core Insight: Separate the Runtime from the Workload
 
@@ -19,7 +19,7 @@ The runtime is long-lived infrastructure. Workloads are the project's configurat
 | Concept | What it is | Lifetime |
 |---------|-----------|----------|
 | **Runtime** | The OrgLoop process. Event bus, scheduler, logger fanout, HTTP control server. One per host. | Host uptime |
-| **Project** | A directory with `orgloop.yaml` + `package.json`. Defines sources, routes, transforms, actors. | Loaded at startup |
+| **Project (Module)** | A directory with `orgloop.yaml` + `package.json`. Defines sources, routes, transforms, actors. Multiple projects can be loaded into one runtime. | Loaded dynamically |
 
 ```
 +-----------------------------------------------------------------+
@@ -32,29 +32,45 @@ The runtime is long-lived infrastructure. Workloads are the project's configurat
 |  +----------+  +----------+  +------------+  +--------------+  |
 |                                                                 |
 |  +----------------------------------------------------------+  |
-|  | Project: "engineering-org"                                |  |
-|  |                                                           |  |
+|  | Module: "engineering-org"                                 |  |
 |  | sources: github, linear, claude-code                      |  |
 |  | routes: github-pr-review, linear-to-eng, cc-supervisor    |  |
 |  | actors: openclaw-engineering-agent                         |  |
-|  | transforms: drop-bot-noise, dedup                         |  |
+|  +----------------------------------------------------------+  |
+|                                                                 |
+|  +----------------------------------------------------------+  |
+|  | Module: "ops-org"                                         |  |
+|  | sources: pagerduty                                        |  |
+|  | routes: oncall-to-responder                               |  |
+|  | actors: openclaw-ops-agent                                |  |
 |  +----------------------------------------------------------+  |
 +-----------------------------------------------------------------+
 ```
 
 ### Project Loading
 
-When `orgloop start` runs:
+When `orgloop start` runs for the **first time** (no daemon running):
 
 1. Read `orgloop.yaml` and all referenced YAML files
 2. Auto-discover routes from `routes/` directory
 3. Resolve environment variables (`${VAR}` substitution)
 4. Dynamically import connector/transform/logger packages from `node_modules/`
 5. Create a `Runtime` instance and start shared infrastructure (bus, scheduler, HTTP server)
-6. Load the resolved project config via `runtime.loadModule()` (internal API)
-7. Sources begin polling, routes are registered, actors are ready
+6. Register a custom control handler (`module/load-project`) so additional modules can be added later
+7. Load the resolved project config via `runtime.loadModule()` (internal API)
+8. Register the module in `~/.orgloop/modules.json` for cross-command state tracking
+9. Sources begin polling, routes are registered, actors are ready
 
-Internally, the project is loaded as a `ModuleInstance` -- this is an implementation detail. The internal abstraction exists to keep the door open for future multi-project runtimes without breaking the current model.
+When `orgloop start` runs and a **daemon is already running**:
+
+1. Detect the running daemon via PID file and process check
+2. Read `orgloop.yaml` and determine the module name and config path
+3. POST to `http://127.0.0.1:<port>/control/module/load-project` with `{ configPath, projectDir }`
+4. The daemon's custom handler resolves connectors, loads config, and calls `runtime.loadModule()`
+5. If a module with the same name is already loaded, it performs a hot-reload (unload + reload)
+6. Register the module in `~/.orgloop/modules.json`
+
+Each project is loaded as a `ModuleInstance` -- modules share the runtime's infrastructure (bus, scheduler, HTTP server) but own their own sources, actors, routes, and transforms. Events are routed within each module's scope independently.
 
 ### Runtime Modes
 
@@ -74,7 +90,7 @@ orgloop start --daemon
 
 Forks to background. PID written to `~/.orgloop/orgloop.pid`. Stdout/stderr redirected to `~/.orgloop/logs/daemon.stdout.log` and `daemon.stderr.log`. Use `orgloop stop` to shut down.
 
-Before forking, the daemon checks for an already-running instance via the PID file. If one is found, it reports the error and exits.
+Before forking, the daemon checks for an already-running instance via the PID file. If one is found, it registers the current project as an additional module into the running daemon via the control API.
 
 #### Supervised Daemon (production, auto-restart)
 
@@ -106,7 +122,13 @@ Graceful shutdown sequence:
 
 ### Shutdown via Control API
 
-`orgloop stop` first attempts to shut down via the HTTP control API (`POST /control/shutdown`). If the control API is unreachable, it falls back to sending SIGTERM to the PID from the PID file. Either path triggers the graceful shutdown sequence.
+`orgloop stop` is module-aware. It determines which module the current directory owns:
+
+- **Last module:** Shuts down the daemon entirely via `POST /control/shutdown` (or SIGTERM fallback).
+- **Multiple modules:** Unloads only this module via `POST /control/module/unload` -- the daemon continues serving other modules.
+- **`--all` flag:** Unconditionally shuts down the daemon (alias for `orgloop shutdown`).
+
+`orgloop shutdown` unconditionally stops the daemon and all modules.
 
 ### State Management
 
@@ -114,6 +136,7 @@ Graceful shutdown sequence:
 ~/.orgloop/
 ├── orgloop.pid              # Runtime PID
 ├── runtime.port             # HTTP listener port
+├── modules.json             # Registered module state (name, dir, config, loadedAt)
 ├── heartbeat                # Supervisor health heartbeat
 ├── state.json               # Runtime state snapshot (sources, routes, actors)
 ├── logs/
@@ -143,11 +166,13 @@ Graceful shutdown sequence:
 ```bash
 # Runtime lifecycle
 orgloop start                          # Start in foreground (development)
-orgloop start --daemon                 # Start as background daemon
+orgloop start --daemon                 # Start as background daemon (or register into running daemon)
 orgloop start --daemon --supervised    # Start as supervised daemon (auto-restart)
 orgloop start --force                  # Skip doctor pre-flight checks
-orgloop stop                           # Stop runtime gracefully
-orgloop status                         # Runtime health + source/route/actor summary
+orgloop stop                           # Stop this module (or daemon if last module)
+orgloop stop --all                     # Stop daemon and all modules
+orgloop shutdown                       # Unconditionally stop daemon and all modules
+orgloop status                         # Runtime health + all modules + source/route/actor summary
 ```
 
 **Pre-flight checks.** Before starting, `orgloop start` runs `orgloop doctor` checks. If critical errors are found, startup is blocked (use `--force` to bypass). If the environment is degraded (e.g., missing optional credentials), a warning is shown and startup proceeds.
@@ -190,7 +215,7 @@ The runtime architecture is designed with a networked future in mind, but explic
 - Workload migration (moving a running project between hosts)
 - Consensus / split-brain handling
 
-**Future multi-project runtime.** The internal `ModuleInstance` and `ModuleRegistry` abstractions support loading multiple projects into a single runtime. This capability is architecturally present but not exposed via the CLI. A future version could allow multiple people on a shared host to each load different OrgLoop projects into a single runtime -- one runtime, multiple projects, independent lifecycles, no restarts, no event gaps. This is explicitly deferred until there is a real need.
+**Multi-project runtime (implemented).** The CLI now supports loading multiple projects into a single runtime. Running `orgloop start` from different project directories registers each project as a separate module in the shared daemon. Each module has independent sources, routes, transforms, and actors, but shares the runtime infrastructure (bus, scheduler, HTTP server). Module state is tracked in `~/.orgloop/modules.json`. `orgloop stop` is module-aware -- it unloads only the current directory's module unless it's the last one.
 
 ### Hot Reload (Future)
 

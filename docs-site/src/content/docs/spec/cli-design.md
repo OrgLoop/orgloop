@@ -16,8 +16,9 @@ COMMANDS:
   validate          Validate configuration files
   plan              Show what would change (dry run)
   start             Start the runtime (--daemon, --supervised, --force)
-  stop              Stop the running runtime
-  status            Show runtime status, sources, actors, recent events
+  stop              Stop the current module (or daemon if last module)
+  shutdown          Stop the daemon and all modules unconditionally
+  status            Show runtime status, all modules, sources, actors, recent events
   logs              Tail or query the event log
   test              Inject a test event and trace its path
   add               Scaffold a new connector, transform, logger, or route
@@ -178,6 +179,11 @@ Logs: orgloop logs | Status: orgloop status | Stop: orgloop stop
 
 Under the hood, `start` creates a `Runtime` instance, starts the HTTP control API, resolves connectors, and loads the project config. The CLI's `resolveConnectors()` dynamically imports all referenced connector packages and instantiates source/actor instances. If a connector package is missing, the CLI suggests `pnpm add <package>`.
 
+**Multi-module behavior:** `start` is module-aware. If a daemon is already running (detected via PID file and process check), `start` registers the current directory's module into the running daemon via the control API instead of starting a new daemon. This allows multiple OrgLoop projects to share a single daemon process.
+
+- If the module is already loaded (same name), it performs a hot-reload (unload + load).
+- Module state is tracked in `~/.orgloop/modules.json` so other CLI commands (`stop`, `status`) can map directories to module names.
+
 ```bash
 # Foreground (development, debugging)
 orgloop start
@@ -188,32 +194,64 @@ orgloop start --daemon
 
 # Supervised daemon (auto-restarts on crash)
 orgloop start --daemon --supervised
+
+# Start a second project into the same running daemon
+cd ~/projects/another-org
+orgloop start --daemon
+# Module registered into existing daemon — no new process
 ```
 
 #### `orgloop stop`
 
 ```bash
+# In a project directory with one module running:
 $ orgloop stop
+Module "engineering-org" is the last module. Shutting down daemon.
+Stopping OrgLoop daemon (PID 42891)...
+Stopped.
 
-Stopping OrgLoop (PID 42891)...
-  ✓ Flushing loggers...
-  ✓ Saving checkpoints...
-  ✓ Shutting down sources...
-  ✓ Stopped.
+# In a project directory when multiple modules are running:
+$ orgloop stop
+Unloading module "engineering-org"...
+Module "engineering-org" stopped. Daemon continues with 1 module(s).
 ```
+
+`orgloop stop` is **module-aware**. It determines which module the current directory owns and stops only that module:
+
+- If this is the **last module**, the daemon shuts down entirely.
+- If **other modules** are still running, only this module is unloaded and the daemon continues.
+- Use `--all` to unconditionally stop the daemon and all modules (alias for `orgloop shutdown`).
+- Use `--force` to send SIGKILL instead of graceful shutdown.
 
 Graceful shutdown: first attempts to shut down via the HTTP control API (`POST /control/shutdown`), falling back to SIGTERM if the control API is unreachable. Either path flushes log buffers, persists current checkpoints, waits for in-flight deliveries (with timeout), then exits.
 
+#### `orgloop shutdown`
+
+```bash
+$ orgloop shutdown
+
+Stopping OrgLoop daemon (PID 42891)...
+Requesting graceful shutdown via control API...
+Stopped.
+```
+
+Unconditionally stops the daemon and all loaded modules. Unlike `stop`, which is module-aware and only removes the current directory's module, `shutdown` always takes down the entire daemon. Use `--force` for immediate SIGKILL.
+
 #### `orgloop status`
 
-Queries the running runtime's HTTP control API (`GET /control/status`) for a status snapshot.
+Queries the running runtime's HTTP control API (`GET /control/status`) for a status snapshot. When multiple modules are loaded, shows all modules and their resources.
 
 ```bash
 $ orgloop status
 
-OrgLoop — my-org
+OrgLoop Runtime
   Status: running (PID 42891, uptime 3h 22m)
-  Workspace: default
+  Control API: http://127.0.0.1:4800
+
+Modules (2):
+  NAME               DIR                          STATE   SOURCES  ROUTES
+  engineering-org    ~/projects/engineering-org    active  3        3
+  ops-org            ~/projects/ops-org            active  1        2
 
 Sources:
   NAME          TYPE     INTERVAL  LAST POLL           EVENTS (24h)

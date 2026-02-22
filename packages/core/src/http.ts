@@ -27,6 +27,10 @@ export class WebhookServer {
 	private readonly onEvent: (event: OrgLoopEvent) => Promise<void>;
 	private server: ReturnType<typeof createServer> | null = null;
 	private _runtime: RuntimeControl | null = null;
+	private readonly controlHandlers = new Map<
+		string,
+		(body: Record<string, unknown>) => Promise<unknown>
+	>();
 
 	constructor(
 		onEvent: (event: OrgLoopEvent) => Promise<void>,
@@ -34,6 +38,14 @@ export class WebhookServer {
 	) {
 		this.onEvent = onEvent;
 		this.handlers = handlers ?? new Map();
+	}
+
+	/** Register a custom control API handler for a given route suffix. */
+	registerControlHandler(
+		route: string,
+		handler: (body: Record<string, unknown>) => Promise<unknown>,
+	): void {
+		this.controlHandlers.set(route, handler);
 	}
 
 	set runtime(rt: RuntimeControl) {
@@ -193,6 +205,15 @@ export class WebhookServer {
 				// Defer stop so the HTTP response flushes before server teardown
 				const rt = this._runtime;
 				setImmediate(() => void rt.stop());
+				return;
+			}
+
+			// Check custom control handlers
+			const customHandler = this.controlHandlers.get(route);
+			if (customHandler) {
+				const body = req.method === 'POST' ? await this.readBody(req) : {};
+				const result = await customHandler(body);
+				this.jsonResponse(res, 200, result);
 				return;
 			}
 

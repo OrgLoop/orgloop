@@ -12,6 +12,7 @@ import type { ModuleStatus, RuntimeStatus, SourceHealthState } from '@orgloop/sd
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { loadCliConfig } from '../config.js';
+import { readModulesState } from '../module-registry.js';
 import * as output from '../output.js';
 
 const PID_DIR = join(homedir(), '.orgloop');
@@ -138,7 +139,11 @@ function displayModuleHealth(mod: ModuleStatus): void {
 	}
 }
 
-function displayRuntimeStatus(runtimeStatus: RuntimeStatus): void {
+async function displayRuntimeStatus(runtimeStatus: RuntimeStatus): Promise<void> {
+	// Load module registry for directory info
+	const modulesState = await readModulesState();
+	const dirMap = new Map(modulesState.modules.map((m) => [m.name, m.sourceDir]));
+
 	output.blank();
 	output.heading('OrgLoop Runtime');
 	output.info(`  Status: ${chalk.green('running')} (PID ${runtimeStatus.pid})`);
@@ -151,6 +156,10 @@ function displayRuntimeStatus(runtimeStatus: RuntimeStatus): void {
 	for (const mod of runtimeStatus.modules) {
 		output.blank();
 		output.heading(`Module: ${mod.name}`);
+		const dir = dirMap.get(mod.name);
+		if (dir) {
+			output.info(`  Directory: ${dir}`);
+		}
 		output.info(`  State: ${mod.state} | Uptime: ${formatUptime(mod.uptime_ms)}`);
 		output.info(`  Sources: ${mod.sources} | Actors: ${mod.actors} | Routes: ${mod.routes}`);
 
@@ -222,11 +231,15 @@ export function registerStatusCommand(program: Command): void {
 
 				if (runtimeStatus) {
 					if (output.isJsonMode()) {
-						output.json(runtimeStatus);
+						const modulesState = await readModulesState();
+						const dirMap = Object.fromEntries(
+							modulesState.modules.map((m) => [m.name, m.sourceDir]),
+						);
+						output.json({ ...runtimeStatus, moduleDirectories: dirMap });
 						return;
 					}
 
-					displayRuntimeStatus(runtimeStatus);
+					await displayRuntimeStatus(runtimeStatus);
 
 					// Recent events
 					const recentEvents = await getRecentEvents(5);

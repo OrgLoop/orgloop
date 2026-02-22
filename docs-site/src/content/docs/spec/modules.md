@@ -309,14 +309,44 @@ When you run `orgloop start`, the CLI:
 3. Auto-discovers RouteGroup files from `routes/`
 4. Resolves `${VAR}` references in all loaded YAML
 5. Dynamically imports connector/transform/logger packages from the project's `node_modules/`
-6. Creates a `Runtime` instance and loads the project as a single unit
+6. **If no daemon is running:** Creates a `Runtime` instance and loads the project as its first module
+7. **If a daemon is already running:** Registers this project as an additional module into the existing daemon via the control API
 
 The runtime receives the fully resolved config -- sources, actors, routes, transforms, loggers -- and starts polling, routing, and delivering events. The project directory structure is a config-time concern; the runtime only sees the resolved primitives.
 
 Run `orgloop plan` to see exactly what the resolved config looks like before starting. Run `orgloop validate` to check config syntax and reference integrity without starting.
 
+### Multi-Project Runtimes
+
+Multiple projects can share a single daemon process. Each project is loaded as a separate module with independent sources, actors, routes, and transforms. The shared runtime infrastructure (event bus, scheduler, HTTP server) is created once and used by all modules.
+
+```bash
+# Terminal 1: Start the first project (starts daemon)
+cd ~/projects/engineering-org
+orgloop start --daemon
+
+# Terminal 2: Register a second project into the same daemon
+cd ~/projects/ops-org
+orgloop start --daemon
+# → "Module 'ops-org' registered into running daemon."
+
+# Check status — shows both modules
+orgloop status
+
+# Stop just the ops-org module (daemon continues)
+cd ~/projects/ops-org
+orgloop stop
+
+# Stop everything
+orgloop shutdown
+```
+
+Module state is tracked in `~/.orgloop/modules.json`. This file maps module names to their source directories and config paths, enabling CLI commands to associate the current working directory with the correct module.
+
 ### Relationship to Internal Architecture
 
-Internally, the runtime uses `ModuleInstance` and `ModuleRegistry` classes to manage workload lifecycle. The CLI loads the project config via `runtime.loadModule()`. These are implementation details -- the user-facing model is a project. The internal abstraction exists to support potential future capabilities (multi-project runtimes, dynamic workload management) without breaking the current single-project model.
+Internally, the runtime uses `ModuleInstance` and `ModuleRegistry` classes to manage workload lifecycle. The CLI loads each project config via `runtime.loadModule()`. Each project becomes a `ModuleInstance` with its own resources, lifecycle state, and event routing scope. Modules can be loaded, unloaded, and reloaded independently without affecting other modules.
+
+The CLI's `daemon-client.ts` provides HTTP client functions for communicating with the running daemon, and `module-registry.ts` manages the persistent module tracking in `~/.orgloop/modules.json`.
 
 For the runtime architecture, see [Runtime Lifecycle](./runtime-lifecycle/). For CLI commands, see [CLI Design](./cli-design/).
