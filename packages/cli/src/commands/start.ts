@@ -1,7 +1,10 @@
 /**
  * orgloop start — Start the runtime with current config.
  *
- * Loads config, creates Runtime instance, starts it with control API.
+ * If no daemon is running, starts a new daemon and registers the current
+ * directory's module. If a daemon IS running, registers the current
+ * directory's module into the existing daemon via the control API.
+ *
  * Foreground by default; --daemon forks to background.
  */
 
@@ -9,10 +12,12 @@ import { fork } from 'node:child_process';
 import { closeSync, openSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { loadCliConfig, resolveConfigPath } from '../config.js';
+import { getDaemonInfo } from '../daemon-client.js';
+import { deriveModuleName, registerModule } from '../module-registry.js';
 import * as output from '../output.js';
 import { createProjectImport } from '../project-import.js';
 import { resolveConnectors } from '../resolve-connectors.js';
@@ -23,15 +28,6 @@ const PID_FILE = join(PID_DIR, 'orgloop.pid');
 const PORT_FILE = join(PID_DIR, 'runtime.port');
 const STATE_FILE = join(PID_DIR, 'state.json');
 const LOG_DIR = join(PID_DIR, 'logs');
-
-function isProcessRunning(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
 
 async function cleanupPidFile(): Promise<void> {
 	try {
@@ -69,6 +65,136 @@ async function saveState(config: import('@orgloop/sdk').OrgLoopConfig): Promise<
 	await writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
 }
 
+// ─── Shared: resolve all connectors/transforms/loggers from config ─────────
+
+async function resolveModuleResources(
+	config: import('@orgloop/sdk').OrgLoopConfig,
+	projectDir: string,
+) {
+	const projectImport = createProjectImport(projectDir);
+
+	// Resolve connectors
+	const { sources: resolvedSources, actors: resolvedActors } = await resolveConnectors(
+		config,
+		projectImport as Parameters<typeof resolveConnectors>[1],
+	);
+
+	// Resolve package transforms
+	const resolvedTransforms = new Map<string, import('@orgloop/sdk').Transform>();
+	for (const tDef of config.transforms) {
+		if (tDef.type === 'package' && tDef.package) {
+			try {
+				const mod = await projectImport(tDef.package);
+				if (typeof mod.register === 'function') {
+					const reg = mod.register() as import('@orgloop/sdk').TransformRegistration;
+
+					// Validate transform config against schema if available
+					if (reg.configSchema && tDef.config) {
+						try {
+							const AjvMod = await import('ajv');
+							const AjvClass = AjvMod.default?.default ?? AjvMod.default ?? AjvMod;
+							const ajv = new AjvClass({ allErrors: true });
+							const validate = ajv.compile(reg.configSchema);
+							if (!validate(tDef.config)) {
+								const errors = (validate.errors ?? [])
+									.map(
+										(e: { instancePath?: string; message?: string }) =>
+											`${e.instancePath || '/'}: ${e.message}`,
+									)
+									.join('; ');
+								output.warn(
+									`Transform "${tDef.name}" config validation failed: ${errors}. Check your transform YAML config matches the expected schema.`,
+								);
+							}
+						} catch {
+							// Schema validation is best-effort
+						}
+					}
+
+					resolvedTransforms.set(tDef.name, new reg.transform());
+				}
+			} catch (err) {
+				output.warn(
+					`Transform "${tDef.name}" (${tDef.package}) not available: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		}
+	}
+
+	// Resolve loggers
+	const resolvedLoggers = new Map<string, import('@orgloop/sdk').Logger>();
+	for (const loggerDef of config.loggers) {
+		try {
+			const mod = await projectImport(loggerDef.type);
+			if (typeof mod.register === 'function') {
+				const reg = mod.register();
+				resolvedLoggers.set(loggerDef.name, new reg.logger());
+			}
+		} catch (err) {
+			output.warn(
+				`Logger "${loggerDef.name}" (${loggerDef.type}) not available: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
+
+	// Create persistent checkpoint store
+	let checkpointStore: import('@orgloop/core').FileCheckpointStore | undefined;
+	try {
+		const { FileCheckpointStore } = await import('@orgloop/core');
+		checkpointStore = new FileCheckpointStore();
+	} catch {
+		// Fall through — runtime will use InMemoryCheckpointStore
+	}
+
+	return {
+		resolvedSources,
+		resolvedActors,
+		resolvedTransforms,
+		resolvedLoggers,
+		checkpointStore,
+	};
+}
+
+// ─── Register module into a running daemon ──────────────────────────────────
+
+async function registerIntoRunningDaemon(port: number, configPath?: string): Promise<void> {
+	const resolvedConfigPath = resolveConfigPath(configPath);
+	const projectDir = dirname(resolvedConfigPath);
+
+	output.info('OrgLoop daemon is already running. Registering module...');
+
+	const res = await fetch(`http://127.0.0.1:${port}/control/module/load-project`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			configPath: resolvedConfigPath,
+			projectDir: resolve(projectDir),
+		}),
+		signal: AbortSignal.timeout(30_000),
+	});
+
+	if (!res.ok) {
+		const body = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(body.error ?? `HTTP ${res.status}`);
+	}
+
+	const result = (await res.json()) as {
+		name: string;
+		state: string;
+		sources: number;
+		actors: number;
+		routes: number;
+	};
+
+	output.blank();
+	output.success(`Module "${result.name}" registered into running daemon`);
+	output.info(
+		`  State: ${result.state} | Sources: ${result.sources} | Actors: ${result.actors} | Routes: ${result.routes}`,
+	);
+	output.blank();
+	output.info('Run `orgloop status` to see all modules.');
+}
+
 // ─── Foreground run ──────────────────────────────────────────────────────────
 
 async function runForeground(configPath?: string, force?: boolean): Promise<void> {
@@ -104,7 +230,6 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 
 	// Derive project directory from config path for package resolution
 	const projectDir = dirname(resolveConfigPath(configPath));
-	const projectImport = createProjectImport(projectDir);
 
 	// Import Runtime from core — this may fail if core isn't built yet
 	let RuntimeClass: typeof import('@orgloop/core').Runtime;
@@ -160,89 +285,16 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 		return;
 	}
 
-	// Resolve connectors from config (project-relative resolution)
-	let resolvedSources: Map<string, import('@orgloop/sdk').SourceConnector>;
-	let resolvedActors: Map<string, import('@orgloop/sdk').ActorConnector>;
+	// Resolve all module resources
+	let resolved: Awaited<ReturnType<typeof resolveModuleResources>>;
 	try {
-		const resolved = await resolveConnectors(
-			config,
-			projectImport as Parameters<typeof resolveConnectors>[1],
-		);
-		resolvedSources = resolved.sources;
-		resolvedActors = resolved.actors;
+		resolved = await resolveModuleResources(config, projectDir);
 	} catch (err) {
 		output.error(
 			`Connector resolution failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 		process.exitCode = 1;
 		return;
-	}
-
-	// Create persistent checkpoint store
-	let checkpointStore: import('@orgloop/core').FileCheckpointStore | undefined;
-	try {
-		const { FileCheckpointStore } = await import('@orgloop/core');
-		checkpointStore = new FileCheckpointStore();
-	} catch {
-		// Fall through — runtime will use InMemoryCheckpointStore
-	}
-
-	// Resolve package transforms from config (project-relative), with config schema validation
-	const resolvedTransforms = new Map<string, import('@orgloop/sdk').Transform>();
-	for (const tDef of config.transforms) {
-		if (tDef.type === 'package' && tDef.package) {
-			try {
-				const mod = await projectImport(tDef.package);
-				if (typeof mod.register === 'function') {
-					const reg = mod.register() as import('@orgloop/sdk').TransformRegistration;
-
-					// Validate transform config against schema if available
-					if (reg.configSchema && tDef.config) {
-						try {
-							const AjvMod = await import('ajv');
-							const AjvClass = AjvMod.default?.default ?? AjvMod.default ?? AjvMod;
-							const ajv = new AjvClass({ allErrors: true });
-							const validate = ajv.compile(reg.configSchema);
-							if (!validate(tDef.config)) {
-								const errors = (validate.errors ?? [])
-									.map(
-										(e: { instancePath?: string; message?: string }) =>
-											`${e.instancePath || '/'}: ${e.message}`,
-									)
-									.join('; ');
-								output.warn(
-									`Transform "${tDef.name}" config validation failed: ${errors}. Check your transform YAML config matches the expected schema.`,
-								);
-							}
-						} catch {
-							// Schema validation is best-effort — don't block startup
-						}
-					}
-
-					resolvedTransforms.set(tDef.name, new reg.transform());
-				}
-			} catch (err) {
-				output.warn(
-					`Transform "${tDef.name}" (${tDef.package}) not available: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-		}
-	}
-
-	// Resolve loggers from config (project-relative)
-	const resolvedLoggers = new Map<string, import('@orgloop/sdk').Logger>();
-	for (const loggerDef of config.loggers) {
-		try {
-			const mod = await projectImport(loggerDef.type);
-			if (typeof mod.register === 'function') {
-				const reg = mod.register();
-				resolvedLoggers.set(loggerDef.name, new reg.logger());
-			}
-		} catch (err) {
-			output.warn(
-				`Logger "${loggerDef.name}" (${loggerDef.type}) not available: ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
 	}
 
 	// Create Runtime instance and start
@@ -263,6 +315,8 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 	const shutdown = async () => {
 		output.blank();
 		output.info('Shutting down...');
+		const { clearModulesState } = await import('../module-registry.js');
+		await clearModulesState();
 		await runtime.stop();
 		await cleanupPidFile();
 		process.exit(0);
@@ -278,23 +332,87 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 		// Start HTTP server for control API and webhooks
 		await runtime.startHttpServer();
 
+		// Register the project loader handler so other CLI processes can add modules
+		runtime.registerControlHandler('module/load-project', async (body) => {
+			const reqConfigPath = body.configPath as string;
+			const reqProjectDir = body.projectDir as string;
+
+			if (!reqConfigPath || !reqProjectDir) {
+				throw new Error('configPath and projectDir are required');
+			}
+
+			const reqConfig = await loadCliConfig({ configPath: reqConfigPath });
+			const moduleName = deriveModuleName(reqConfig.project.name, reqProjectDir);
+
+			// Check if module already loaded — if so, reload it
+			const existingModules = runtime.listModules();
+			const existing = existingModules.find((m) => (m as { name: string }).name === moduleName);
+
+			if (existing) {
+				// Hot-reload: unload then reload
+				await runtime.unloadModule(moduleName);
+			}
+
+			const reqResolved = await resolveModuleResources(reqConfig, reqProjectDir);
+
+			const moduleConfig: import('@orgloop/core').ModuleConfig = {
+				name: moduleName,
+				sources: reqConfig.sources,
+				actors: reqConfig.actors,
+				routes: reqConfig.routes,
+				transforms: reqConfig.transforms,
+				loggers: reqConfig.loggers,
+				defaults: reqConfig.defaults,
+				modulePath: resolve(reqProjectDir),
+			};
+
+			const status = await runtime.loadModule(moduleConfig, {
+				sources: reqResolved.resolvedSources,
+				actors: reqResolved.resolvedActors,
+				transforms: reqResolved.resolvedTransforms,
+				loggers: reqResolved.resolvedLoggers,
+				...(reqResolved.checkpointStore ? { checkpointStore: reqResolved.checkpointStore } : {}),
+			});
+
+			// Track in modules.json
+			await registerModule({
+				name: moduleName,
+				sourceDir: resolve(reqProjectDir),
+				configPath: reqConfigPath,
+				loadedAt: new Date().toISOString(),
+			});
+
+			return status;
+		});
+
 		// Convert config to ModuleConfig and load as a module
+		const moduleName = deriveModuleName(config.project.name, projectDir);
 		const moduleConfig: import('@orgloop/core').ModuleConfig = {
-			name: config.project.name ?? 'default',
+			name: moduleName,
 			sources: config.sources,
 			actors: config.actors,
 			routes: config.routes,
 			transforms: config.transforms,
 			loggers: config.loggers,
 			defaults: config.defaults,
+			modulePath: resolve(projectDir),
 		};
 
 		await runtime.loadModule(moduleConfig, {
-			sources: resolvedSources,
-			actors: resolvedActors,
-			transforms: resolvedTransforms,
-			loggers: resolvedLoggers,
-			...(checkpointStore ? { checkpointStore } : {}),
+			sources: resolved.resolvedSources,
+			actors: resolved.resolvedActors,
+			transforms: resolved.resolvedTransforms,
+			loggers: resolved.resolvedLoggers,
+			...(resolved.checkpointStore ? { checkpointStore: resolved.checkpointStore } : {}),
+		});
+
+		// Track in modules.json
+		const resolvedConfigPath = resolveConfigPath(configPath);
+		await registerModule({
+			name: moduleName,
+			sourceDir: resolve(projectDir),
+			configPath: resolvedConfigPath,
+			loadedAt: new Date().toISOString(),
 		});
 
 		// Display progress
@@ -365,21 +483,23 @@ async function startAction(
 		const globalOpts = cmd.parent?.opts() ?? {};
 
 		if (opts.daemon) {
-			// WQ-69: Check for already-running instance
-			try {
-				const existingPid = Number.parseInt((await readFile(PID_FILE, 'utf-8')).trim(), 10);
-				if (!Number.isNaN(existingPid) && isProcessRunning(existingPid)) {
+			// Check for already-running daemon
+			const daemonInfo = await getDaemonInfo();
+
+			if (daemonInfo) {
+				// Daemon is running — register this project's module into it
+				try {
+					await registerIntoRunningDaemon(daemonInfo.port, globalOpts.config as string | undefined);
+				} catch (err) {
 					output.error(
-						`OrgLoop is already running (PID ${existingPid}). Run \`orgloop stop\` first.`,
+						`Failed to register module: ${err instanceof Error ? err.message : String(err)}`,
 					);
 					process.exitCode = 1;
-					return;
 				}
-				// Stale PID file — clean it up
-				await cleanupPidFile();
-			} catch {
-				// No PID file — proceed
+				return;
 			}
+
+			// No daemon running — start a new one
 
 			// Pre-flight doctor check before forking
 			if (!opts.force) {
@@ -491,7 +611,7 @@ async function startAction(
 export function registerStartCommand(program: Command): void {
 	program
 		.command('start')
-		.description('Start the runtime with current config')
+		.description('Start the runtime or register a module into a running daemon')
 		.option('--daemon', 'Run as background daemon')
 		.option('--supervised', 'Enable supervisor for auto-restart (requires --daemon)')
 		.option('--force', 'Skip doctor pre-flight checks')
