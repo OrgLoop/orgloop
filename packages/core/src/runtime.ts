@@ -799,6 +799,16 @@ class Runtime extends EventEmitter implements RuntimeControl {
 		}
 	}
 
+	// ─── Custom Control Handlers ─────────────────────────────────────────────
+
+	/** Register a custom control API handler for a given route suffix. */
+	registerControlHandler(
+		route: string,
+		handler: (body: Record<string, unknown>) => Promise<unknown>,
+	): void {
+		this.webhookServer.registerControlHandler(route, handler);
+	}
+
 	// ─── RuntimeControl Implementation ───────────────────────────────────────
 
 	status(): RuntimeStatus {

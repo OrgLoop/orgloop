@@ -145,6 +145,7 @@ loggers:
 - **Transforms for security** -- injection scanning, bot noise filtering, rate limiting
 - **Full observability** -- every event, transform, delivery logged and traceable
 - **One process replaces N pollers** -- no more scattered LaunchAgents and cron jobs
+- **Multi-module daemon** -- multiple projects share one daemon; add/remove modules without restarts
 - **Daemon mode** -- supervised background process with auto-restart
 - **`plan` before `start`** -- see exactly what will change (Terraform-style)
 
