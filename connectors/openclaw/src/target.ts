@@ -23,6 +23,39 @@ function resolveEnvVar(value: string): string {
 	return value;
 }
 
+/**
+ * Resolve a dot-path (e.g. "payload.pr_number") against a nested object.
+ * Returns undefined if any segment is missing.
+ */
+function resolvePath(obj: Record<string, unknown>, path: string): unknown {
+	let current: unknown = obj;
+	for (const segment of path.split('.')) {
+		if (current == null || typeof current !== 'object') return undefined;
+		current = (current as Record<string, unknown>)[segment];
+	}
+	return current;
+}
+
+/**
+ * Interpolate `{{dot.path}}` placeholders in a template string using event fields.
+ *
+ * Uses double-brace syntax to avoid collision with OrgLoop's `${...}` env var
+ * substitution in YAML config. Paths are resolved against the full event object:
+ * top-level fields, provenance.*, and payload.* are all reachable.
+ * Unresolved placeholders are replaced with "unknown" to keep session keys stable.
+ *
+ * Examples:
+ *   "orgloop:pr-review:{{payload.pr_number}}"  → "orgloop:pr-review:42"
+ *   "orgloop:{{source}}:{{provenance.author}}"  → "orgloop:github:alice"
+ */
+function interpolateTemplate(template: string, event: OrgLoopEvent): string {
+	return template.replace(/\{\{([^}]+)\}\}/g, (_match, path: string) => {
+		const value = resolvePath(event as unknown as Record<string, unknown>, path.trim());
+		if (value === undefined || value === null) return 'unknown';
+		return String(value);
+	});
+}
+
 interface OpenClawConfig {
 	base_url?: string;
 	auth_token_env?: string;
@@ -54,9 +87,12 @@ export class OpenClawTarget implements ActorConnector {
 	async deliver(event: OrgLoopEvent, routeConfig: RouteDeliveryConfig): Promise<DeliveryResult> {
 		const url = `${this.baseUrl}/hooks/agent`;
 
+		const rawSessionKey =
+			(routeConfig.session_key as string) ?? `orgloop:${event.source}:${event.type}`;
+
 		const body = {
 			message: this.buildMessage(event, routeConfig),
-			sessionKey: (routeConfig.session_key as string) ?? `orgloop:${event.source}:${event.type}`,
+			sessionKey: interpolateTemplate(rawSessionKey, event),
 			agentId: this.agentId,
 			wakeMode: (routeConfig.wake_mode as string) ?? 'now',
 			deliver: routeConfig.deliver ?? false,

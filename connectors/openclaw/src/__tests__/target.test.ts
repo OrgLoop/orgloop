@@ -93,6 +93,86 @@ describe('OpenClawTarget', () => {
 		expect(body.sessionKey).toBe('orgloop:linear:resource.changed');
 	});
 
+	it('interpolates {{}} placeholders in session_key from event fields', async () => {
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			provenance: {
+				platform: 'github',
+				platform_event: 'pull_request_review_comment',
+				author: 'alice',
+				author_type: 'team_member',
+			},
+			payload: { pr_number: 8769 },
+		});
+
+		const routeConfig: RouteDeliveryConfig = {
+			session_key: 'orgloop:github:pr-review:{{payload.pr_number}}',
+		};
+
+		await target.deliver(event, routeConfig);
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('orgloop:github:pr-review:8769');
+	});
+
+	it('interpolates provenance fields in session_key', async () => {
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			provenance: {
+				platform: 'github',
+				platform_event: 'pull_request.review_submitted',
+				author: 'bob',
+				author_type: 'team_member',
+			},
+			payload: { pr_number: 42 },
+		});
+
+		const routeConfig: RouteDeliveryConfig = {
+			session_key: 'orgloop:{{source}}:pr:{{payload.pr_number}}',
+		};
+
+		await target.deliver(event, routeConfig);
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('orgloop:github:pr:42');
+	});
+
+	it('replaces missing interpolation values with "unknown"', async () => {
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: {},
+		});
+
+		const routeConfig: RouteDeliveryConfig = {
+			session_key: 'orgloop:pr:{{payload.pr_number}}',
+		};
+
+		await target.deliver(event, routeConfig);
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('orgloop:pr:unknown');
+	});
+
+	it('leaves session_key unchanged when no placeholders are present', async () => {
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: { pr_number: 99 },
+		});
+
+		const routeConfig: RouteDeliveryConfig = {
+			session_key: 'hook:github:pr-review:engineering',
+		};
+
+		await target.deliver(event, routeConfig);
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('hook:github:pr-review:engineering');
+	});
+
 	it('includes platform_event and author in message', async () => {
 		const event = createTestEvent({
 			source: 'github',
