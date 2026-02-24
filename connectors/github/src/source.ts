@@ -98,6 +98,11 @@ export class GitHubSource implements SourceConnector {
 	// WQ-94: Per-poll budget tracking
 	private pollBudget: PollBudget = { apiCalls: 0, startRemaining: null };
 
+	// Token rotation: store the raw config string (e.g. "${GITHUB_TOKEN}")
+	// so we can re-resolve the env var on each poll and detect changes.
+	private rawTokenConfig = '';
+	private resolvedToken = '';
+
 	async init(config: SourceConfig): Promise<void> {
 		const cfg = config.config as unknown as GitHubSourceConfig;
 		const [owner, repo] = cfg.repo.split('/');
@@ -115,8 +120,29 @@ export class GitHubSource implements SourceConnector {
 			this.rateBudgetFraction = Math.max(0, Math.min(1, cfg.rate_budget));
 		}
 
-		const token = resolveEnvVar(cfg.token);
-		this.octokit = new Octokit({ auth: token });
+		this.rawTokenConfig = cfg.token;
+		this.resolvedToken = resolveEnvVar(cfg.token);
+		this.octokit = new Octokit({ auth: this.resolvedToken });
+	}
+
+	/**
+	 * Re-resolve the token from env vars. If the token changed
+	 * (e.g. rotated by an external refresh script), recreate the Octokit client.
+	 * Returns true if the token was refreshed.
+	 */
+	private refreshTokenIfChanged(): boolean {
+		try {
+			const currentToken = resolveEnvVar(this.rawTokenConfig);
+			if (currentToken !== this.resolvedToken) {
+				console.log('[github] Token changed, refreshing Octokit client');
+				this.resolvedToken = currentToken;
+				this.octokit = new Octokit({ auth: currentToken });
+				return true;
+			}
+		} catch {
+			// If env var resolution fails, keep using the current token
+		}
+		return false;
 	}
 
 	async poll(checkpoint: string | null): Promise<PollResult> {
@@ -128,6 +154,9 @@ export class GitHubSource implements SourceConnector {
 				: new Date(Date.now() - this.initialLookbackMs).toISOString();
 		const events: OrgLoopEvent[] = [];
 		let latestTimestamp = since;
+
+		// Proactively check if the token has been rotated (e.g. by a refresh script)
+		this.refreshTokenIfChanged();
 
 		// Reset per-poll budget tracking
 		this.pollBudget = {
@@ -165,42 +194,64 @@ export class GitHubSource implements SourceConnector {
 				events.push(...comments);
 			}
 
-			// Non-essential event types: skip if rate budget is low
+			// Non-essential event types: skip if rate budget is low.
+			// Each is wrapped in try/catch so a permissions error on one endpoint
+			// (e.g. 403 on workflow_run without Actions scope) doesn't abort the whole poll.
 			if (
 				this.events.includes('pull_request.closed') ||
 				this.events.includes('pull_request.merged')
 			) {
 				if (this.hasBudget()) {
-					const prs = await this.pollClosedPRs(since);
-					events.push(...prs);
+					try {
+						const prs = await this.pollClosedPRs(since);
+						events.push(...prs);
+					} catch (e: unknown) {
+						console.warn(`[github] Failed to poll closed PRs: ${(e as Error).message}`);
+					}
 				}
 			}
 
 			if (this.events.includes('pull_request.opened')) {
 				if (this.hasBudget()) {
-					const prs = await this.pollOpenedPRs(since);
-					events.push(...prs);
+					try {
+						const prs = await this.pollOpenedPRs(since);
+						events.push(...prs);
+					} catch (e: unknown) {
+						console.warn(`[github] Failed to poll opened PRs: ${(e as Error).message}`);
+					}
 				}
 			}
 
 			if (this.events.includes('pull_request.ready_for_review')) {
 				if (this.hasBudget()) {
-					const prs = await this.pollReadyForReviewPRs(since);
-					events.push(...prs);
+					try {
+						const prs = await this.pollReadyForReviewPRs(since);
+						events.push(...prs);
+					} catch (e: unknown) {
+						console.warn(`[github] Failed to poll ready-for-review PRs: ${(e as Error).message}`);
+					}
 				}
 			}
 
 			if (this.events.includes('workflow_run.completed')) {
 				if (this.hasBudget()) {
-					const runs = await this.pollFailedWorkflowRuns(since);
-					events.push(...runs);
+					try {
+						const runs = await this.pollFailedWorkflowRuns(since);
+						events.push(...runs);
+					} catch (e: unknown) {
+						console.warn(`[github] Failed to poll workflow runs: ${(e as Error).message}`);
+					}
 				}
 			}
 
 			if (this.events.includes('check_suite.completed')) {
 				if (this.hasBudget()) {
-					const suites = await this.pollCheckSuites(since);
-					events.push(...suites);
+					try {
+						const suites = await this.pollCheckSuites(since);
+						events.push(...suites);
+					} catch (e: unknown) {
+						console.warn(`[github] Failed to poll check suites: ${(e as Error).message}`);
+					}
 				}
 			}
 		} catch (err: unknown) {
@@ -227,8 +278,13 @@ export class GitHubSource implements SourceConnector {
 					checkpoint: this.advanceCheckpoint(events, latestTimestamp),
 				};
 			}
-			if (error.status === 401 || error.status === 403) {
-				console.error(`[github] Auth error: ${error.message}`);
+			if (error.status === 401 || (error.status === 403 && !this.isRateLimited())) {
+				// Token may have expired — try refreshing from env vars
+				if (this.refreshTokenIfChanged()) {
+					console.log('[github] Token refreshed after auth error, will retry on next poll');
+				} else {
+					console.error(`[github] Auth error (token unchanged): ${error.message}`);
+				}
 				return { events: [], checkpoint: latestTimestamp };
 			}
 			throw err;

@@ -33,6 +33,7 @@ export function normalizePullRequestReview(
 		provenance: {
 			platform: 'github',
 			platform_event: 'pull_request.review_submitted',
+			resource_id: `review-${review.id}`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -70,6 +71,7 @@ export function normalizePullRequestReviewComment(
 		provenance: {
 			platform: 'github',
 			platform_event: 'pull_request_review_comment',
+			resource_id: `comment-${comment.id}`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -105,6 +107,7 @@ export function normalizeIssueComment(
 		provenance: {
 			platform: 'github',
 			platform_event: 'issue_comment',
+			resource_id: `issue-comment-${comment.id}`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -139,6 +142,7 @@ export function normalizePullRequestClosed(
 		provenance: {
 			platform: 'github',
 			platform_event: merged ? 'pull_request.merged' : 'pull_request.closed',
+			resource_id: `pr-${pr.number}-${merged ? 'merged' : 'closed'}`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -172,6 +176,7 @@ export function normalizeWorkflowRunFailed(
 		provenance: {
 			platform: 'github',
 			platform_event: 'workflow_run.completed',
+			resource_id: `run-${run.id}`,
 			author: (actor?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(actor?.login as string) ?? '',
@@ -204,6 +209,7 @@ export function normalizePullRequestOpened(
 		provenance: {
 			platform: 'github',
 			platform_event: 'pull_request.opened',
+			resource_id: `pr-${pr.number}-opened`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -238,6 +244,7 @@ export function normalizePullRequestReadyForReview(
 		provenance: {
 			platform: 'github',
 			platform_event: 'pull_request.ready_for_review',
+			resource_id: `pr-${pr.number}-ready`,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -271,6 +278,7 @@ export function normalizeCheckSuiteCompleted(
 		provenance: {
 			platform: 'github',
 			platform_event: 'check_suite.completed',
+			resource_id: `suite-${suite.id}`,
 			author: (app?.slug as string) ?? 'unknown',
 			author_type: 'bot' as const,
 			repo: (repo.full_name as string) ?? '',
