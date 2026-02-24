@@ -94,7 +94,7 @@ export class AgentCtlSource implements SourceConnector {
 		this.execFn = fn;
 	}
 
-	async poll(checkpoint: string | null): Promise<PollResult> {
+	async poll(_checkpoint: string | null): Promise<PollResult> {
 		const sessions = await this.listSessions();
 		const currentState = new Map(sessions.map((s) => [s.id, s]));
 		const events = this.diffState(currentState);

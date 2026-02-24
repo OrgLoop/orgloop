@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecFn } from '../target.js';
 import { DockerTarget } from '../target.js';
 
-function successExec(): ExecFn {
+function _successExec(): ExecFn {
 	return vi.fn(async () => ({ stdout: '', stderr: '' }));
 }
 

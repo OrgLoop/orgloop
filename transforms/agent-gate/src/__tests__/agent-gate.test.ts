@@ -1,6 +1,5 @@
 import { createTestContext, createTestEvent } from '@orgloop/sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AgentGateConfig } from '../agent-gate.js';
 import { AgentGateTransform } from '../agent-gate.js';
 
 function mockExecFn(sessions: Array<{ status: string; adapter: string }>) {
