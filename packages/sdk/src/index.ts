@@ -28,6 +28,9 @@ export {
 	isOrgLoopEvent,
 	validateEvent,
 } from './event.js';
+// HTTP connection management
+export type { HttpAgent, HttpAgentOptions } from './http.js';
+export { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from './http.js';
 // Logger interface
 export type {
 	Logger,

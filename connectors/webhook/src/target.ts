@@ -6,9 +6,11 @@ import type {
 	ActorConfig,
 	ActorConnector,
 	DeliveryResult,
+	HttpAgent,
 	OrgLoopEvent,
 	RouteDeliveryConfig,
 } from '@orgloop/sdk';
+import { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from '@orgloop/sdk';
 
 /** Resolve env var references */
 function resolveEnvVar(value: string): string {
@@ -82,6 +84,8 @@ export class WebhookTarget implements ActorConnector {
 	private customHeaders: Record<string, string> = {};
 	private authHeader?: string;
 	private bodyTemplate?: Record<string, unknown>;
+	private httpAgent: HttpAgent | null = null;
+	private keepAliveFetch: typeof globalThis.fetch = globalThis.fetch;
 
 	async init(config: ActorConfig): Promise<void> {
 		const cfg = config.config as unknown as WebhookTargetConfig;
@@ -100,6 +104,9 @@ export class WebhookTarget implements ActorConnector {
 				this.authHeader = `Basic ${credentials}`;
 			}
 		}
+
+		this.httpAgent = createHttpAgent();
+		this.keepAliveFetch = createFetchWithKeepAlive(this.httpAgent);
 	}
 
 	async deliver(event: OrgLoopEvent, routeConfig: RouteDeliveryConfig): Promise<DeliveryResult> {
@@ -127,7 +134,7 @@ export class WebhookTarget implements ActorConnector {
 		}
 
 		try {
-			const response = await fetch(this.url, {
+			const response = await this.keepAliveFetch(this.url, {
 				method: this.method,
 				headers,
 				body: JSON.stringify(body),
@@ -164,6 +171,9 @@ export class WebhookTarget implements ActorConnector {
 	}
 
 	async shutdown(): Promise<void> {
-		// Nothing to clean up
+		if (this.httpAgent) {
+			await closeHttpAgent(this.httpAgent);
+			this.httpAgent = null;
+		}
 	}
 }

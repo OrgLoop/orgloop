@@ -13,8 +13,19 @@
  */
 
 import { Octokit } from '@octokit/rest';
-import type { OrgLoopEvent, PollResult, SourceConfig, SourceConnector } from '@orgloop/sdk';
-import { parseDuration } from '@orgloop/sdk';
+import type {
+	HttpAgent,
+	OrgLoopEvent,
+	PollResult,
+	SourceConfig,
+	SourceConnector,
+} from '@orgloop/sdk';
+import {
+	closeHttpAgent,
+	createFetchWithKeepAlive,
+	createHttpAgent,
+	parseDuration,
+} from '@orgloop/sdk';
 import {
 	normalizeCheckSuiteCompleted,
 	normalizeIssueComment,
@@ -91,6 +102,9 @@ export class GitHubSource implements SourceConnector {
 	private rateLimit: RateLimitState | null = null;
 	private rateBudgetFraction = 0.8;
 
+	// HTTP keep-alive agent for connection reuse across polls
+	private httpAgent: HttpAgent | null = null;
+
 	// WQ-94: PR state cache — tracks updated_at per PR to skip unchanged PRs
 	private prCache = new Map<number, string>();
 	private lastCacheEviction = Date.now();
@@ -122,7 +136,11 @@ export class GitHubSource implements SourceConnector {
 
 		this.rawTokenConfig = cfg.token;
 		this.resolvedToken = resolveEnvVar(cfg.token);
-		this.octokit = new Octokit({ auth: this.resolvedToken });
+		this.httpAgent = createHttpAgent();
+		this.octokit = new Octokit({
+			auth: this.resolvedToken,
+			request: { fetch: createFetchWithKeepAlive(this.httpAgent) },
+		});
 	}
 
 	/**
@@ -136,7 +154,10 @@ export class GitHubSource implements SourceConnector {
 			if (currentToken !== this.resolvedToken) {
 				console.log('[github] Token changed, refreshing Octokit client');
 				this.resolvedToken = currentToken;
-				this.octokit = new Octokit({ auth: currentToken });
+				this.octokit = new Octokit({
+					auth: currentToken,
+					request: this.httpAgent ? { fetch: createFetchWithKeepAlive(this.httpAgent) } : undefined,
+				});
 				return true;
 			}
 		} catch {
@@ -782,5 +803,9 @@ export class GitHubSource implements SourceConnector {
 
 	async shutdown(): Promise<void> {
 		this.prCache.clear();
+		if (this.httpAgent) {
+			await closeHttpAgent(this.httpAgent);
+			this.httpAgent = null;
+		}
 	}
 }
