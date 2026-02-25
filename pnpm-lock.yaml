@@ -69,9 +69,6 @@ importers:
 
   connectors/linear:
     dependencies:
-      '@linear/sdk':
-        specifier: ^75.0.0
-        version: 75.0.0(graphql@15.10.1)
       '@orgloop/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -497,11 +494,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@graphql-typed-document-node/core@3.2.0':
-    resolution: {integrity: sha512-mB9oAsNCm9aM3/SOv4YtBMqZbYj10R7dkq8byBqxGY/ncFwhf2oQzMV+LCRlWoDSEBJ3COiR1yeDvMtsoOsuFQ==}
-    peerDependencies:
-      graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0 || ^17.0.0
-
   '@inquirer/ansi@2.0.3':
     resolution: {integrity: sha512-g44zhR3NIKVs0zUesa4iMzExmZpLUdTLRMCStqX3GE5NT6VkPcxQGJ+uC8tDgBUC/vB1rUhUd55cOf++4NZcmw==}
     engines: {node: '>=23.5.0 || ^22.13.0 || ^21.7.0 || ^20.12.0'}
@@ -638,10 +630,6 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
-
-  '@linear/sdk@75.0.0':
-    resolution: {integrity: sha512-gf/xmbiWc4cLHjoeOGCNVTglpy+M+ENHpP3bvU57wxD17s7j8zJGXp4wOStnRcQYR0FT+n/76fPp+XR3ZtEjDw==}
-    engines: {node: '>=18.x'}
 
   '@octokit/auth-token@6.0.0':
     resolution: {integrity: sha512-P4YJBPdPSpWTQ1NU4XYdvHvXJJDxM6YwpS0FZHRgP7YFkdVxsWcpWGy/NVqlAA7PcPCnMacXlRm1y2PFZRWL/w==}
@@ -1069,10 +1057,6 @@ packages:
     resolution: {integrity: sha512-QZjmEOC+IT1uk6Rx0sX22V6uHWVwbdbxf1faPqJ1QhLdGgsRGCZoyaQBm/piRdJy/D2um6hM1UP7ZEeQ4EkP+Q==}
     engines: {node: '>=18'}
 
-  graphql@15.10.1:
-    resolution: {integrity: sha512-BL/Xd/T9baO6NFzoMpiMD7YUZ62R6viR5tp/MULVEnbYJXZA//kRNW7J0j1w/wXArgL0sCxhDfK5dczSKn3+cg==}
-    engines: {node: '>= 10.x'}
-
   iconv-lite@0.7.2:
     resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
     engines: {node: '>=0.10.0'}
@@ -1484,10 +1468,6 @@ snapshots:
   '@esbuild/win32-x64@0.27.3':
     optional: true
 
-  '@graphql-typed-document-node/core@3.2.0(graphql@15.10.1)':
-    dependencies:
-      graphql: 15.10.1
-
   '@inquirer/ansi@2.0.3': {}
 
   '@inquirer/checkbox@5.1.0(@types/node@25.3.0)':
@@ -1608,12 +1588,6 @@ snapshots:
       '@types/node': 25.3.0
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
-
-  '@linear/sdk@75.0.0(graphql@15.10.1)':
-    dependencies:
-      '@graphql-typed-document-node/core': 3.2.0(graphql@15.10.1)
-    transitivePeerDependencies:
-      - graphql
 
   '@octokit/auth-token@6.0.0': {}
 
@@ -2007,8 +1981,6 @@ snapshots:
     optional: true
 
   get-east-asian-width@1.4.0: {}
-
-  graphql@15.10.1: {}
 
   iconv-lite@0.7.2:
     dependencies:
