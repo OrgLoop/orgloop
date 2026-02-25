@@ -10,7 +10,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LinearClient } from '@linear/sdk';
-import type { OrgLoopEvent, PollResult, SourceConfig, SourceConnector } from '@orgloop/sdk';
+import type {
+	HttpAgent,
+	OrgLoopEvent,
+	PollResult,
+	SourceConfig,
+	SourceConnector,
+} from '@orgloop/sdk';
+import { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from '@orgloop/sdk';
 import {
 	normalizeAssigneeChange,
 	normalizeComment,
@@ -56,6 +63,7 @@ export class LinearSource implements SourceConnector {
 	private sourceId = '';
 	private cacheDir = '';
 	private stateCache = new Map<string, CachedIssueState>();
+	private httpAgent: HttpAgent | null = null;
 
 	async init(config: SourceConfig): Promise<void> {
 		const cfg = config.config as unknown as LinearSourceConfig;
@@ -64,7 +72,13 @@ export class LinearSource implements SourceConnector {
 		this.sourceId = config.id;
 
 		const apiKey = resolveEnvVar(cfg.api_key);
-		this.client = new LinearClient({ apiKey });
+		this.httpAgent = createHttpAgent();
+		const keepAliveFetch = createFetchWithKeepAlive(this.httpAgent);
+		// LinearClient's underlying GraphQL client supports custom fetch,
+		// but LinearClientOptions types don't expose it. Use a variable
+		// to bypass TypeScript's excess property checking on object literals.
+		const clientOptions = { apiKey, fetch: keepAliveFetch };
+		this.client = new LinearClient(clientOptions);
 
 		// Set up cache directory
 		this.cacheDir = cfg.cache_dir ?? join(tmpdir(), 'orgloop-linear');
@@ -288,5 +302,9 @@ export class LinearSource implements SourceConnector {
 	async shutdown(): Promise<void> {
 		this.saveStateCache();
 		this.stateCache.clear();
+		if (this.httpAgent) {
+			await closeHttpAgent(this.httpAgent);
+			this.httpAgent = null;
+		}
 	}
 }

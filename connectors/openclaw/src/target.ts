@@ -6,9 +6,11 @@ import type {
 	ActorConfig,
 	ActorConnector,
 	DeliveryResult,
+	HttpAgent,
 	OrgLoopEvent,
 	RouteDeliveryConfig,
 } from '@orgloop/sdk';
+import { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from '@orgloop/sdk';
 
 /** Resolve env var references like ${OPENCLAW_AUTH_TOKEN} */
 function resolveEnvVar(value: string): string {
@@ -71,6 +73,8 @@ export class OpenClawTarget implements ActorConnector {
 	private agentId?: string;
 	private defaultChannel?: string;
 	private defaultTo?: string;
+	private httpAgent: HttpAgent | null = null;
+	private fetch: typeof globalThis.fetch = globalThis.fetch;
 
 	async init(config: ActorConfig): Promise<void> {
 		const cfg = config.config as unknown as OpenClawConfig;
@@ -82,6 +86,9 @@ export class OpenClawTarget implements ActorConnector {
 		if (cfg.auth_token_env) {
 			this.authToken = resolveEnvVar(cfg.auth_token_env);
 		}
+
+		this.httpAgent = createHttpAgent();
+		this.fetch = createFetchWithKeepAlive(this.httpAgent);
 	}
 
 	async deliver(event: OrgLoopEvent, routeConfig: RouteDeliveryConfig): Promise<DeliveryResult> {
@@ -108,7 +115,7 @@ export class OpenClawTarget implements ActorConnector {
 		}
 
 		try {
-			const response = await fetch(url, {
+			const response = await this.fetch(url, {
 				method: 'POST',
 				headers,
 				body: JSON.stringify(body),
@@ -146,7 +153,10 @@ export class OpenClawTarget implements ActorConnector {
 	}
 
 	async shutdown(): Promise<void> {
-		// Nothing to clean up
+		if (this.httpAgent) {
+			await closeHttpAgent(this.httpAgent);
+			this.httpAgent = null;
+		}
 	}
 
 	/**

@@ -26,5 +26,8 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.3.0"
+  },
+  "dependencies": {
+    "undici": "^7.22.0"
   }
 }
