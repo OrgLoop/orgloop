@@ -347,6 +347,108 @@ describe('FilterTransform', () => {
 		});
 	});
 
+	describe('array-contains via [] notation', () => {
+		it('matches when array element has matching sub-field', async () => {
+			await filter.init({
+				match: {
+					'payload.labels[].name': 'niko-authored',
+				},
+			});
+
+			const event = createTestEvent({
+				payload: { labels: [{ name: 'niko-authored' }, { name: 'bug' }] },
+			});
+			expect(await filter.execute(event, createTestContext())).not.toBeNull();
+		});
+
+		it('drops when no array element matches', async () => {
+			await filter.init({
+				match: {
+					'payload.labels[].name': 'niko-authored',
+				},
+			});
+
+			const event = createTestEvent({
+				payload: { labels: [{ name: 'bug' }, { name: 'enhancement' }] },
+			});
+			expect(await filter.execute(event, createTestContext())).toBeNull();
+		});
+
+		it('drops when field is not an array', async () => {
+			await filter.init({
+				match: {
+					'payload.labels[].name': 'niko-authored',
+				},
+			});
+
+			const event = createTestEvent({
+				payload: { labels: 'not-an-array' },
+			});
+			expect(await filter.execute(event, createTestContext())).toBeNull();
+		});
+
+		it('works with match_any and [] notation', async () => {
+			await filter.init({
+				match_any: {
+					'payload.labels[].name': 'niko-authored',
+					'provenance.author': 'nick',
+				},
+			});
+
+			// Matches via label
+			const labelEvent = createTestEvent({
+				provenance: { platform: 'github', author: 'bot' },
+				payload: { labels: [{ name: 'niko-authored' }] },
+			});
+			expect(await filter.execute(labelEvent, createTestContext())).not.toBeNull();
+
+			// Matches via author
+			const authorEvent = createTestEvent({
+				provenance: { platform: 'github', author: 'nick' },
+				payload: { labels: [{ name: 'bug' }] },
+			});
+			expect(await filter.execute(authorEvent, createTestContext())).not.toBeNull();
+
+			// Matches neither
+			const noMatchEvent = createTestEvent({
+				provenance: { platform: 'github', author: 'stranger' },
+				payload: { labels: [{ name: 'bug' }] },
+			});
+			expect(await filter.execute(noMatchEvent, createTestContext())).toBeNull();
+		});
+
+		it('works with exclude and [] notation', async () => {
+			await filter.init({
+				exclude: {
+					'payload.labels[].name': 'do-not-autofix',
+				},
+			});
+
+			const excludedEvent = createTestEvent({
+				payload: { labels: [{ name: 'do-not-autofix' }, { name: 'bug' }] },
+			});
+			expect(await filter.execute(excludedEvent, createTestContext())).toBeNull();
+
+			const normalEvent = createTestEvent({
+				payload: { labels: [{ name: 'bug' }] },
+			});
+			expect(await filter.execute(normalEvent, createTestContext())).not.toBeNull();
+		});
+
+		it('handles simple value arrays (no sub-path)', async () => {
+			await filter.init({
+				match: {
+					'payload.tags[]': 'urgent',
+				},
+			});
+
+			const event = createTestEvent({
+				payload: { tags: ['urgent', 'bugfix'] },
+			});
+			expect(await filter.execute(event, createTestContext())).not.toBeNull();
+		});
+	});
+
 	describe('no config', () => {
 		it('passes all events when no match/exclude configured', async () => {
 			await filter.init({});

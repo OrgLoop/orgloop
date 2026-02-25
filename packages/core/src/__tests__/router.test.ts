@@ -117,6 +117,85 @@ describe('matchRoutes', () => {
 		expect(matchRoutes(event, [])).toHaveLength(0);
 	});
 
+	it('supports array-contains filter with [] notation', () => {
+		const routes = [
+			makeRoute({
+				name: 'r1',
+				when: {
+					source: 'github',
+					events: ['resource.changed'],
+					filter: { 'payload.labels[].name': 'niko-authored' },
+				},
+			}),
+		];
+
+		// Event with matching label
+		const matchEvent = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: {
+				labels: [{ name: 'niko-authored' }, { name: 'bug' }],
+			},
+		});
+		expect(matchRoutes(matchEvent, routes)).toHaveLength(1);
+
+		// Event without matching label
+		const noMatchEvent = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: {
+				labels: [{ name: 'bug' }, { name: 'enhancement' }],
+			},
+		});
+		expect(matchRoutes(noMatchEvent, routes)).toHaveLength(0);
+
+		// Event with no labels
+		const noLabelsEvent = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: {},
+		});
+		expect(matchRoutes(noLabelsEvent, routes)).toHaveLength(0);
+	});
+
+	it('array-contains works with empty array', () => {
+		const routes = [
+			makeRoute({
+				name: 'r1',
+				when: {
+					source: 'github',
+					events: ['resource.changed'],
+					filter: { 'payload.labels[].name': 'niko-authored' },
+				},
+			}),
+		];
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: { labels: [] },
+		});
+		expect(matchRoutes(event, routes)).toHaveLength(0);
+	});
+
+	it('array-contains works for simple value arrays (no sub-path)', () => {
+		const routes = [
+			makeRoute({
+				name: 'r1',
+				when: {
+					source: 'github',
+					events: ['resource.changed'],
+					filter: { 'payload.tags[]': 'urgent' },
+				},
+			}),
+		];
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: { tags: ['urgent', 'bugfix'] },
+		});
+		expect(matchRoutes(event, routes)).toHaveLength(1);
+	});
+
 	it('event type matching supports multiple types in route', () => {
 		const routes = [
 			makeRoute({

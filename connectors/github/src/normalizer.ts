@@ -19,6 +19,15 @@ function extractPrAuthor(pr: Record<string, unknown>): string {
 	return (prUser?.login as string) ?? 'unknown';
 }
 
+/** Extract label names from a PR/issue as simple objects for filter matching */
+function extractLabels(obj: Record<string, unknown>): Array<{ name: string }> {
+	const labels = obj.labels as Array<Record<string, unknown>> | undefined;
+	if (!Array.isArray(labels)) return [];
+	return labels
+		.map((l) => ({ name: (l.name as string) ?? '' }))
+		.filter((l) => l.name !== '');
+}
+
 /** Normalize a PR review event */
 export function normalizePullRequestReview(
 	sourceId: string,
@@ -53,6 +62,7 @@ export function normalizePullRequestReview(
 			review_body: review.body,
 			pr_title: pr.title,
 			pr_number: pr.number,
+			labels: extractLabels(pr),
 		},
 	});
 }
@@ -89,6 +99,7 @@ export function normalizePullRequestReviewComment(
 			pr_number: pr.number,
 			diff_hunk: comment.diff_hunk,
 			path: comment.path,
+			labels: extractLabels(pr),
 		},
 	});
 }
@@ -159,6 +170,7 @@ export function normalizePullRequestClosed(
 			pr_number: pr.number,
 			merged,
 			merged_by: merged ? ((pr.merged_by as Record<string, unknown>)?.login as string) : undefined,
+			labels: extractLabels(pr),
 		},
 	});
 }
@@ -227,6 +239,7 @@ export function normalizePullRequestOpened(
 			draft: pr.draft ?? false,
 			head_ref: pr.head ? (pr.head as Record<string, unknown>).ref : undefined,
 			base_ref: pr.base ? (pr.base as Record<string, unknown>).ref : undefined,
+			labels: extractLabels(pr),
 		},
 	});
 }
@@ -261,6 +274,7 @@ export function normalizePullRequestReadyForReview(
 			pr_number: pr.number,
 			head_ref: pr.head ? (pr.head as Record<string, unknown>).ref : undefined,
 			base_ref: pr.base ? (pr.base as Record<string, unknown>).ref : undefined,
+			labels: extractLabels(pr),
 		},
 	});
 }

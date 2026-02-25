@@ -8,8 +8,35 @@
 /**
  * Get a value from a nested object using a dot-separated path.
  * Returns undefined if any segment is missing.
+ *
+ * Supports array-contains notation via `[]`:
+ *   getByPath(obj, "labels[].name") returns a _marker array_ of all
+ *   label name values, so matchesValue can check membership.
  */
 export function getByPath(obj: unknown, path: string): unknown {
+	const bracketIdx = path.indexOf('[]');
+	if (bracketIdx !== -1) {
+		// Array-contains path: resolve up to [], collect sub-path values
+		const arrayPath = path.slice(0, bracketIdx);
+		const remainder = path.slice(bracketIdx + 2);
+		const subPath = remainder.startsWith('.') ? remainder.slice(1) : remainder;
+
+		const arr = getByPathSimple(obj, arrayPath);
+		if (!Array.isArray(arr)) return undefined;
+
+		if (!subPath) return arr;
+
+		// Collect each element's sub-field value
+		return arr
+			.map((item) => getByPathSimple(item, subPath))
+			.filter((v) => v !== undefined);
+	}
+
+	return getByPathSimple(obj, path);
+}
+
+/** Simple dot-path traversal without array support. */
+function getByPathSimple(obj: unknown, path: string): unknown {
 	const segments = path.split('.');
 	let current: unknown = obj;
 	for (const segment of segments) {
@@ -34,8 +61,14 @@ export function matchesValue(actual: unknown, pattern: unknown): boolean {
 		return actual === null || actual === undefined;
 	}
 
+	// Pattern is an array: actual must match any element in the pattern
 	if (Array.isArray(pattern)) {
 		return pattern.some((p) => matchesValue(actual, p));
+	}
+
+	// Actual is an array (e.g. from [] path notation): any element must match the pattern
+	if (Array.isArray(actual)) {
+		return actual.some((item) => matchesValue(item, pattern));
 	}
 
 	if (typeof pattern === 'string' && pattern.startsWith('/')) {

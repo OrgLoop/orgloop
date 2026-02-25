@@ -23,10 +23,52 @@ function getNestedValue(obj: unknown, path: string): unknown {
 
 // ─── Filter matching ──────────────────────────────────────────────────────────
 
+/**
+ * Check if a filter entry matches.
+ *
+ * Supports array-contains via `[]` notation in the path:
+ *   "payload.labels[].name": "niko-authored"
+ * means "any element in payload.labels has .name === 'niko-authored'".
+ *
+ * Without `[]`, uses strict equality on the resolved value.
+ */
+function matchesFilterEntry(event: OrgLoopEvent, path: string, expected: unknown): boolean {
+	const bracketIdx = path.indexOf('[]');
+	if (bracketIdx === -1) {
+		// Simple dot-path: strict equality
+		return getNestedValue(event, path) === expected;
+	}
+
+	// Array-contains: split at [], resolve the array, match the remainder
+	const arrayPath = path.slice(0, bracketIdx);
+	const remainder = path.slice(bracketIdx + 2);
+	// remainder starts with '.' if there's a sub-field, e.g. "[].name" → ".name"
+	const subPath = remainder.startsWith('.') ? remainder.slice(1) : remainder;
+
+	const arr = getNestedValue(event, arrayPath);
+	if (!Array.isArray(arr)) return false;
+
+	if (!subPath) {
+		// "field[]" with no sub-path: check if expected is an element of the array
+		return arr.some((item) => item === expected);
+	}
+
+	// "field[].sub.path": check if any element's sub-path matches
+	return arr.some((item) => {
+		if (item === null || item === undefined || typeof item !== 'object') return false;
+		const segments = subPath.split('.');
+		let current: unknown = item;
+		for (const seg of segments) {
+			if (current === null || current === undefined || typeof current !== 'object') return false;
+			current = (current as Record<string, unknown>)[seg];
+		}
+		return current === expected;
+	});
+}
+
 function matchesFilter(event: OrgLoopEvent, filter: Record<string, unknown>): boolean {
 	for (const [path, expected] of Object.entries(filter)) {
-		const actual = getNestedValue(event, path);
-		if (actual !== expected) return false;
+		if (!matchesFilterEntry(event, path, expected)) return false;
 	}
 	return true;
 }
