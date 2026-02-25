@@ -570,6 +570,12 @@ export class GitHubSource implements SourceConnector {
 				}
 			}
 
+			if (!prData && prNumber) {
+				console.warn(
+					`[github] Review comment on PR #${prNumber} will have pr_author='unknown' (PR data unavailable)`,
+				);
+			}
+
 			events.push(
 				normalizePullRequestReviewComment(
 					this.sourceId,
@@ -586,20 +592,50 @@ export class GitHubSource implements SourceConnector {
 	/**
 	 * Fetch a single PR by number. Used when a review comment references a PR
 	 * not in the recent pulls cache, so we can enrich with pr_author.
+	 *
+	 * Retries once after a short delay on transient errors (rate limits,
+	 * network blips) to avoid silently degrading pr_author to 'unknown'.
 	 */
 	private async fetchSinglePull(prNumber: number): Promise<GitHubPull | undefined> {
-		try {
-			this.pollBudget.apiCalls++;
-			const { data } = await this.octokit.pulls.get({
-				owner: this.owner,
-				repo: this.repo,
-				pull_number: prNumber,
-			});
-			return data as unknown as GitHubPull;
-		} catch {
-			console.warn(`[github] Failed to fetch PR #${prNumber} for author enrichment`);
-			return undefined;
+		const maxAttempts = 2;
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				await this.checkRateLimit();
+				this.pollBudget.apiCalls++;
+				const { data, headers } = await this.octokit.pulls.get({
+					owner: this.owner,
+					repo: this.repo,
+					pull_number: prNumber,
+				});
+				if (headers) {
+					this.updateRateLimitFromHeaders(headers as unknown as Record<string, string>);
+				}
+				return data as unknown as GitHubPull;
+			} catch (err: unknown) {
+				const error = err as {
+					status?: number;
+					message?: string;
+					response?: { headers?: Record<string, string> };
+				};
+				if (error.response?.headers) {
+					this.updateRateLimitFromHeaders(error.response.headers);
+				}
+				const isRetryable = error.status === 429 || error.status === 502 || error.status === 503;
+				if (isRetryable && attempt < maxAttempts) {
+					const delayMs = error.status === 429 ? 2000 : 1000;
+					console.warn(
+						`[github] fetchSinglePull PR #${prNumber} attempt ${attempt} failed (${error.status}), retrying in ${delayMs}ms`,
+					);
+					await new Promise((resolve) => setTimeout(resolve, delayMs));
+					continue;
+				}
+				console.warn(
+					`[github] Failed to fetch PR #${prNumber} for author enrichment after ${attempt} attempt(s): ${error.status ?? ''} ${error.message ?? 'unknown error'}`,
+				);
+				return undefined;
+			}
 		}
+		return undefined;
 	}
 
 	private async pollIssueComments(since: string): Promise<OrgLoopEvent[]> {
