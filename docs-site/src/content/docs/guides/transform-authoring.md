@@ -210,7 +210,7 @@ OrgLoop ships three built-in transforms:
 
 ### `@orgloop/transform-filter`
 
-General-purpose event filter with dot-path field matching and optional jq mode.
+General-purpose event filter with dot-path field matching, regex patterns, CSV expansion, and a full jq mode escape hatch.
 
 ```yaml
 transforms:
@@ -235,11 +235,19 @@ transforms:
           - "dependabot[bot]"
           - "renovate[bot]"
 
-  # jq mode -- full jq expression (requires jq installed)
+  # Regex patterns -- match by pattern
   - ref: filter
     config:
-      jq: '.provenance.author_type == "team_member"'
+      match:
+        payload.cwd: '/^\/Users\/alice\/work\//'
+
+  # jq mode -- full jq expression for anything match/exclude can't do
+  - ref: filter
+    config:
+      jq: '.payload.labels | any(.name == "needs-review")'
 ```
+
+The filter supports exact values, arrays, regex (`/pattern/flags`), comma-separated value expansion (useful with `${ENV_VARS}`), and jq as the escape hatch for complex logic like array-contains checks. See the [Transform Filter Deep Dive](/guides/transform-filter/) for the complete reference.
 
 ### `@orgloop/transform-dedup`
 
@@ -296,3 +304,8 @@ expect(result).not.toBeNull();
 ```
 
 See the [Building Connectors](/guides/connector-authoring/) guide for the full SDK test harness API.
+
+## See also
+
+- [Transform Filter Deep Dive](/guides/transform-filter/) — complete reference for match, match_any, exclude, jq, regex, and CSV expansion
+- [Patterns & Recipes](/guides/patterns/) — common filtering and enrichment patterns with complete YAML examples

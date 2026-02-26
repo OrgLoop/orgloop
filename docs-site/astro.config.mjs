@@ -34,6 +34,8 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
+						{ label: 'Patterns & Recipes', slug: 'guides/patterns' },
+						{ label: 'Transform Filter Deep Dive', slug: 'guides/transform-filter' },
 						{ label: 'Building Connectors', slug: 'guides/connector-authoring' },
 						{ label: 'Building Transforms', slug: 'guides/transform-authoring' },
 						{ label: 'Project Setup', slug: 'guides/project-setup' },
