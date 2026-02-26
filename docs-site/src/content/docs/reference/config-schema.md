@@ -267,13 +267,15 @@ routes:
 | `when.events` | string[] | Yes | Event types to match (e.g., `resource.changed`). |
 | `when.filter` | object | No | Dot-path filter on event fields. All conditions must match. |
 
-Filter uses dot-path notation to match nested event fields:
+Filter uses dot-path notation to match nested event fields (all conditions must match):
 
 ```yaml
 filter:
   provenance.platform_event: pull_request.review_submitted
   provenance.author_type: team_member
 ```
+
+Route-level filters support exact value matching only. For regex patterns, array-contains logic, or complex boolean expressions, use the [transform-filter](/guides/transform-filter/) in your route's transform pipeline instead.
 
 ### `transforms` — Pipeline
 
