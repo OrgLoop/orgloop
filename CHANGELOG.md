@@ -4,22 +4,53 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
 
+## [0.4.0] - 2026-02-25
 
+### Added
 
+- Batch GraphQL polling replaces N+1 REST/SDK patterns for GitHub and Linear connectors (#58)
+- HTTP keep-alive connection pooling for connectors via SDK (#59)
+- Auto-register into running daemon without `--daemon` flag (#63)
+- Patterns & Recipes and Transform Filter Deep Dive documentation guides (#62)
 
+### Fixed
 
+- Retry `fetchSinglePull` to prevent `pr_author` degradation (#60)
 
+## [0.3.0] - 2026-02-24
 
+### Added
 
+- OpenClaw `session_key` interpolation with event fields (#51)
 
+### Fixed
 
+- GitHub token rotation, per-endpoint error isolation, and `resource_id` for dedup (#50)
+- Resolve lint warnings (unused imports/params) (#52)
+
+## [0.2.0] - 2026-02-22
+
+### Added
+
+- Multi-module single daemon runtime (#45)
+- Per-route `channel`/`to` overrides for OpenClaw connector (#43)
+
+## [0.1.10] - 2026-02-20
+
+### Added
+
+- Prometheus metrics endpoint
+
+### Fixed
+
+- GitHub App installation token support in `doctor` validator (#40)
+- Include `review_id` in PR review events for dedup (#38)
+- Tweak `init` and readme for minimal webhook demo (#34)
+- Update docs site GitHub URL to orgloop org (#36)
 
 ## [0.1.9] - 2026-02-18
-
-Released from version 0.1.8.
-
-## [0.1.8] - 2026-02-16
 
 Released from version 0.1.8.
 
@@ -57,10 +88,6 @@ Released from version 0.1.0.
 
 ## [0.1.0] - 2026-02-09
 
-Released from version 0.1.0.
-
-## [0.1.0] - 2026-02-09
-
 ### Added
 
 - Core engine with event bus, router, scheduler, and transform pipeline
@@ -71,22 +98,14 @@ Released from version 0.1.0.
 - Engine HTTP listener for webhook-based sources (localhost-only, port 4800)
 - CLI commands: init, validate, env, doctor, plan, apply, stop, status, logs, hook, test, inspect, add, version, install-service, service
 - Connectors: GitHub (poll), Linear (poll), Claude Code (webhook/hook), OpenClaw (target), Webhook (generic source+target), Cron (scheduled)
-- Transforms: filter (match/exclude with dot-path patterns, regex, jq mode), dedup (SHA-256 hash, time window, periodic cleanup), enrich (add/copy/compute fields)
-- Loggers: console (ANSI colors, phase icons, level filtering), file (buffered JSONL, rotation by size/age/count, gzip), OpenTelemetry (OTLP export), syslog (RFC 5424)
-- Module system: parameterized templates, `orgloop add module`, manifest validation, composition with namespacing
-- Modules: engineering (5 routes, 3 SOPs), minimal (1 source, 1 actor, 1 route)
-- YAML config with AJV validation and `${ENV_VAR}` substitution
-- Route graph validation: dead sources, unreachable actors, orphan transforms, event type mismatches
-- Pre-flight env var checks in validate and apply with actionable error messages
-- `orgloop doctor` health check command with `--json` output
-- `orgloop env` command with per-var description and help URLs from connector metadata
-- `orgloop hook claude-code-stop` for piping Claude Code post-exit hooks to the engine
-- `.env.example` generation during `orgloop init` with connector-provided helper text
-- Next-step suggestions in CLI output (init, env, validate, apply)
-- Claude Code Stop hook installation during `orgloop init`
-- `orgloop routes` ASCII topology visualization with `--json` output
-- Release tooling: `pnpm release` / `pnpm release:dry` with 10-step publish pipeline
-- E2E pipeline tests covering multi-source, multi-route, transforms, and webhook delivery
+- Transforms: filter, dedup, enrich
+- Loggers: console, file, OpenTelemetry, syslog
+- Module system with parameterized templates
+- Modules: engineering, minimal
+- YAML config with AJV validation and environment variable substitution
+- Route graph validation
+- SDK test harness
+- Documentation site (Astro Starlight)
+- Release tooling with 10-step publish pipeline
+- E2E pipeline tests
 - Examples: minimal, engineering-org, github-to-slack, multi-agent-supervisor, beyond-engineering, org-to-org
-- SDK test harness: MockSource, MockActor, MockTransform, MockLogger, createTestEvent, createTestContext
-- Documentation site (Astro Starlight) with spec, guides, examples, and vision sections

@@ -1,93 +1,55 @@
 # Releasing OrgLoop
 
-Standard operating procedure for publishing `@orgloop/*` packages to npm.
-
-## Running a release
-
-### Dry run (recommended first)
+## Quick Release
 
 ```bash
-pnpm release:dry -- --patch
+bash scripts/release.sh --patch|--minor|--major
 ```
 
-This runs the full pipeline — pre-flight checks, build, test, typecheck, lint, version bump, changelog update, git commit/tag, and `pnpm publish --dry-run` — without actually publishing to npm or pushing to git. After dry run completes, it tells you how to undo the local commit.
+This script handles the full release flow:
 
-### Real release
+1. Calculates the new version from the current `package.json`
+2. Creates a `release/vX.Y.Z` branch from `origin/main`
+3. Bumps version in all `package.json` files (root + `packages/*`)
+4. Prompts to edit `CHANGELOG.md` (or pass `--changelog "entry"`)
+5. Runs `pnpm run build` and `pnpm run test`
+6. Commits and pushes the branch
+7. Opens a PR via `gh-me`
+
+## Post-Merge
+
+After the release PR is merged:
 
 ```bash
-pnpm release -- --patch     # 0.1.0 -> 0.1.1
-pnpm release -- --minor     # 0.1.0 -> 0.2.0
-pnpm release -- --major     # 0.1.0 -> 1.0.0
-pnpm release -- --version 1.0.0-rc.1   # explicit version
+git checkout main && git pull origin main
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-The script handles everything automatically:
+The tag push triggers the publish workflow (GitHub Actions).
 
-1. **Pre-flight** — verifies git is clean, checks npm login, validates branch
-2. **Version** — reads current version, computes new one, checks tag doesn't exist
-3. **Build + test gate** — `pnpm build && pnpm test && pnpm typecheck && pnpm lint` (all must pass)
-4. **Version bump** — updates all 19 package.json files (lockstep versioning)
-5. **CHANGELOG.md** — prepends a dated version section
-6. **Rebuild** — so `dist/` reflects updated versions
-7. **Confirmation** — shows full publish plan, requires explicit `yes`
-8. **Git commit + tag** — `chore: release vX.Y.Z`
-9. **Publish** — each package in dependency order (see below)
-10. **Push** — commit + tag to remote
+## Version Bump Guide
 
-## Publish order
+| Bump    | When                                        |
+| ------- | ------------------------------------------- |
+| `patch` | Bug fixes, docs improvements                |
+| `minor` | New features, non-breaking changes          |
+| `major` | Breaking changes (discuss with Charlie first)|
 
-| Phase | Packages |
-|-------|----------|
-| 1. Foundation | `@orgloop/sdk` |
-| 2. Runtime | `@orgloop/core` |
-| 3. Connectors | `connector-github`, `connector-linear`, `connector-claude-code`, `connector-openclaw`, `connector-webhook`, `connector-cron` |
-| 4. Transforms | `transform-filter`, `transform-dedup`, `transform-enrich` |
-| 5. Loggers | `logger-console`, `logger-file`, `logger-otel`, `logger-syslog` |
-| 6. CLI + Server | `@orgloop/cli`, `@orgloop/server` |
-| 7. Modules | `module-engineering`, `module-minimal` |
+## Manual Release (without script)
 
-Internal `workspace:*` dependencies are automatically replaced with the actual version by pnpm during publish.
+1. Create branch: `git checkout -b release/vX.Y.Z origin/main`
+2. Bump versions in all `package.json` files
+3. Update `CHANGELOG.md`
+4. Build: `pnpm run build`
+5. Test: `pnpm run test`
+6. Commit with release message
+7. Push branch and open PR via `gh-me`
+8. After merge: tag and push tag
 
-## Recovering from partial failures
+## Rules
 
-### Some packages failed to publish
-
-The script reports which succeeded and which failed. Retry individually:
-
-```bash
-cd <package-dir>
-pnpm publish --access public --no-git-checks
-```
-
-### Undo a dry run
-
-```bash
-git reset --soft HEAD~1
-git tag -d v<VERSION>
-git checkout -- .
-```
-
-### Undo a real release (before anyone installs)
-
-```bash
-# Unpublish (72-hour window)
-npm unpublish @orgloop/<package>@<VERSION>
-
-# Remove tag
-git tag -d v<VERSION>
-git push origin :refs/tags/v<VERSION>
-
-# Revert commit
-git revert HEAD
-git push origin HEAD
-```
-
-## npm 2FA
-
-If your npm account has 2FA for publish, you'll be prompted for each package (19 times). Consider an automation token (`npm token create --type=publish`) or setting 2FA to "auth-only" for smoother releases.
-
-## Adding a new package
-
-1. Add `"publishConfig": { "access": "public" }` to its `package.json`
-2. Ensure it has a `"files"` array (e.g., `["dist"]`)
-3. Add its directory path to `PUBLISH_ORDER` in `scripts/release.sh` in the correct dependency position
+- **Never commit directly to main** — all changes go through PRs
+- **Never force push** to any branch
+- **Use `gh-me`** (not `gh`) for all GitHub operations
+- **Always update CHANGELOG.md** before releasing
