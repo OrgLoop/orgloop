@@ -1,7 +1,7 @@
 {
   "name": "@orgloop/core",
-  "version": "0.3.0",
-  "description": "OrgLoop runtime engine — library-first event routing",
+  "version": "0.4.0",
+  "description": "OrgLoop runtime engine \u2014 library-first event routing",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
