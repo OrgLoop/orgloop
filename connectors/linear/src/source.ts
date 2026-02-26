@@ -1,15 +1,17 @@
 /**
  * Linear source connector — polls Linear API for issue and comment activity.
  *
+ * Uses batched GraphQL queries to fetch issues with all relations
+ * (state, assignee, creator, labels, comments) in a single request,
+ * eliminating the N+1 pattern of per-issue relation fetches.
+ *
  * Persists issue state cache to disk for crash recovery.
- * Uses batched GraphQL queries to avoid N+1 request patterns.
  * Supports cursor-based pagination for large result sets.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LinearClient } from '@linear/sdk';
 import type {
 	HttpAgent,
 	OrgLoopEvent,
@@ -18,6 +20,8 @@ import type {
 	SourceConnector,
 } from '@orgloop/sdk';
 import { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from '@orgloop/sdk';
+import type { BatchIssueNode } from './graphql.js';
+import { executeBatchQuery } from './graphql.js';
 import {
 	normalizeAssigneeChange,
 	normalizeComment,
@@ -57,7 +61,7 @@ export interface CachedIssueState {
 
 export class LinearSource implements SourceConnector {
 	readonly id = 'linear';
-	private client!: LinearClient;
+	private apiKey = '';
 	private teamKey = '';
 	private projectName?: string;
 	private sourceId = '';
@@ -71,14 +75,8 @@ export class LinearSource implements SourceConnector {
 		this.projectName = cfg.project;
 		this.sourceId = config.id;
 
-		const apiKey = resolveEnvVar(cfg.api_key);
+		this.apiKey = resolveEnvVar(cfg.api_key);
 		this.httpAgent = createHttpAgent();
-		const keepAliveFetch = createFetchWithKeepAlive(this.httpAgent);
-		// LinearClient's underlying GraphQL client supports custom fetch,
-		// but LinearClientOptions types don't expose it. Use a variable
-		// to bypass TypeScript's excess property checking on object literals.
-		const clientOptions = { apiKey, fetch: keepAliveFetch };
-		this.client = new LinearClient(clientOptions);
 
 		// Set up cache directory
 		this.cacheDir = cfg.cache_dir ?? join(tmpdir(), 'orgloop-linear');
@@ -96,11 +94,8 @@ export class LinearSource implements SourceConnector {
 		let latestTimestamp = since;
 
 		try {
-			const issueEvents = await this.pollIssues(since);
-			events.push(...issueEvents);
-
-			const commentEvents = await this.pollComments(since);
-			events.push(...commentEvents);
+			const batchEvents = await this.pollBatch(since);
+			events.push(...batchEvents);
 		} catch (err: unknown) {
 			const error = err as { status?: number; extensions?: { code?: string }; message?: string };
 			if (error.status === 429 || error.extensions?.code === 'RATE_LIMITED') {
@@ -125,151 +120,130 @@ export class LinearSource implements SourceConnector {
 		return { events, checkpoint: latestTimestamp };
 	}
 
-	private async pollIssues(since: string): Promise<OrgLoopEvent[]> {
+	/**
+	 * Batch poll: fetches issues with all relations (state, assignee, creator,
+	 * labels, comments) in a single GraphQL request per page.
+	 *
+	 * Replaces the old pollIssues() + pollComments() two-pass pattern that
+	 * caused N+1 requests via the @linear/sdk lazy-loading.
+	 */
+	private async pollBatch(since: string): Promise<OrgLoopEvent[]> {
 		const events: OrgLoopEvent[] = [];
 
-		const team = await this.client.team(this.teamKey);
-
-		// Paginate through all updated issues
 		let hasMore = true;
 		let cursor: string | undefined;
 
 		while (hasMore) {
-			const issues = await team.issues({
-				filter: {
-					updatedAt: { gte: new Date(since) },
-					...(this.projectName ? { project: { name: { eq: this.projectName } } } : {}),
-				},
-				first: 50,
-				after: cursor,
+			const data = await executeBatchQuery({
+				apiKey: this.apiKey,
+				teamKey: this.teamKey,
+				since,
+				projectName: this.projectName,
+				cursor,
+				fetch: this.httpAgent ? createFetchWithKeepAlive(this.httpAgent) : undefined,
 			});
 
-			for (const issue of issues.nodes) {
-				// Fetch relations in parallel to avoid N+1
-				const [state, assignee, creator, labels] = await Promise.all([
-					issue.state,
-					issue.assignee,
-					issue.creator,
-					issue.labels(),
-				]);
-				const stateName = state?.name ?? 'Unknown';
-				const assigneeName = assignee?.name ?? null;
-				const priority = issue.priority;
-				const labelNames = labels.nodes.map((l) => l.name).sort();
+			const { nodes, pageInfo } = data.team.issues;
 
-				const cached = this.stateCache.get(issue.id);
+			for (const issue of nodes) {
+				// Process issue changes (state, assignee, priority, labels)
+				this.processIssueChanges(issue, since, events);
 
-				if (cached === undefined) {
-					// First time seeing this issue — check if recently created
-					if (issue.createdAt.toISOString() > since) {
-						events.push(
-							normalizeNewIssue(this.sourceId, {
-								id: issue.id,
+				// Process comments from the same batch response
+				for (const comment of issue.comments.nodes) {
+					events.push(
+						normalizeComment(
+							this.sourceId,
+							{
+								id: comment.id,
+								body: comment.body,
+								url: comment.url,
+								createdAt: comment.createdAt,
+								user: comment.user,
+							},
+							{
 								identifier: issue.identifier,
 								title: issue.title,
-								description: issue.description,
-								url: issue.url,
-								state: { name: stateName },
-								creator: creator ? { name: creator.name } : null,
-								createdAt: issue.createdAt.toISOString(),
-							}),
-						);
-					}
-				} else {
-					const issueData = {
-						identifier: issue.identifier,
-						title: issue.title,
-						url: issue.url,
-						assignee: assignee ? { name: assignee.name } : null,
-						updatedAt: issue.updatedAt.toISOString(),
-					};
-
-					// Detect state change
-					if (cached.state !== stateName) {
-						events.push(
-							normalizeIssueStateChange(
-								this.sourceId,
-								{ id: issue.id, state: { name: stateName }, ...issueData },
-								cached.state,
-							),
-						);
-					}
-
-					// Detect assignee change
-					if (cached.assignee !== assigneeName) {
-						events.push(normalizeAssigneeChange(this.sourceId, issueData, cached.assignee));
-					}
-
-					// Detect priority change
-					if (cached.priority !== priority) {
-						events.push(
-							normalizePriorityChange(this.sourceId, issueData, cached.priority, priority),
-						);
-					}
-
-					// Detect label changes
-					if (JSON.stringify(cached.labels) !== JSON.stringify(labelNames)) {
-						events.push(normalizeLabelChange(this.sourceId, issueData, cached.labels, labelNames));
-					}
+							},
+						),
+					);
 				}
-
-				// Update cache
-				this.stateCache.set(issue.id, {
-					state: stateName,
-					assignee: assigneeName,
-					priority,
-					labels: labelNames,
-				});
 			}
 
-			hasMore = issues.pageInfo.hasNextPage;
-			cursor = issues.pageInfo.endCursor ?? undefined;
+			hasMore = pageInfo.hasNextPage;
+			cursor = pageInfo.endCursor ?? undefined;
 		}
 
 		return events;
 	}
 
-	private async pollComments(since: string): Promise<OrgLoopEvent[]> {
-		const events: OrgLoopEvent[] = [];
+	/**
+	 * Process a single issue from the batch response: detect new issues and
+	 * state/assignee/priority/label changes against the cache.
+	 */
+	private processIssueChanges(issue: BatchIssueNode, since: string, events: OrgLoopEvent[]): void {
+		const stateName = issue.state?.name ?? 'Unknown';
+		const assigneeName = issue.assignee?.name ?? null;
+		const priority = issue.priority;
+		const labelNames = issue.labels.nodes.map((l) => l.name).sort();
 
-		// Filter comments by team to reduce waste
-		const team = await this.client.team(this.teamKey);
-		const issues = await team.issues({
-			filter: {
-				updatedAt: { gte: new Date(since) },
-				...(this.projectName ? { project: { name: { eq: this.projectName } } } : {}),
-			},
-			first: 50,
-		});
+		const cached = this.stateCache.get(issue.id);
 
-		for (const issue of issues.nodes) {
-			const comments = await issue.comments({
-				filter: { createdAt: { gte: new Date(since) } },
-				first: 50,
-			});
-
-			for (const comment of comments.nodes) {
-				const user = await comment.user;
+		if (cached === undefined) {
+			// First time seeing this issue — check if recently created
+			if (issue.createdAt > since) {
 				events.push(
-					normalizeComment(
+					normalizeNewIssue(this.sourceId, {
+						id: issue.id,
+						identifier: issue.identifier,
+						title: issue.title,
+						description: issue.description,
+						url: issue.url,
+						state: { name: stateName },
+						creator: issue.creator,
+						createdAt: issue.createdAt,
+					}),
+				);
+			}
+		} else {
+			const issueData = {
+				identifier: issue.identifier,
+				title: issue.title,
+				url: issue.url,
+				assignee: issue.assignee,
+				updatedAt: issue.updatedAt,
+			};
+
+			if (cached.state !== stateName) {
+				events.push(
+					normalizeIssueStateChange(
 						this.sourceId,
-						{
-							id: comment.id,
-							body: comment.body,
-							url: comment.url,
-							createdAt: comment.createdAt.toISOString(),
-							user: user ? { name: user.name } : null,
-						},
-						{
-							identifier: issue.identifier,
-							title: issue.title,
-						},
+						{ id: issue.id, state: { name: stateName }, ...issueData },
+						cached.state,
 					),
 				);
 			}
+
+			if (cached.assignee !== assigneeName) {
+				events.push(normalizeAssigneeChange(this.sourceId, issueData, cached.assignee));
+			}
+
+			if (cached.priority !== priority) {
+				events.push(normalizePriorityChange(this.sourceId, issueData, cached.priority, priority));
+			}
+
+			if (JSON.stringify(cached.labels) !== JSON.stringify(labelNames)) {
+				events.push(normalizeLabelChange(this.sourceId, issueData, cached.labels, labelNames));
+			}
 		}
 
-		return events;
+		// Update cache
+		this.stateCache.set(issue.id, {
+			state: stateName,
+			assignee: assigneeName,
+			priority,
+			labels: labelNames,
+		});
 	}
 
 	private get cachePath(): string {

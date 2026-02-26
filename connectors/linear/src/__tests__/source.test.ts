@@ -2,8 +2,19 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BatchIssueNode, BatchIssuesResponse } from '../graphql.js';
 import type { CachedIssueState } from '../source.js';
 import { LinearSource } from '../source.js';
+
+// ─── Mock the graphql module ────────────────────────────────────────────────
+
+vi.mock('../graphql.js', () => ({
+	executeBatchQuery: vi.fn(),
+}));
+
+import { executeBatchQuery } from '../graphql.js';
+
+const mockExecuteBatchQuery = vi.mocked(executeBatchQuery);
 
 // ─── Mock Helpers ──────────────────────────────────────────────────────────────
 
@@ -12,11 +23,11 @@ function makeIssueNode(
 		id: string;
 		identifier: string;
 		title: string;
-		description: string;
+		description: string | null;
 		url: string;
 		priority: number;
-		createdAt: Date;
-		updatedAt: Date;
+		createdAt: string;
+		updatedAt: string;
 		state: { name: string } | null;
 		assignee: { name: string } | null;
 		creator: { name: string } | null;
@@ -25,11 +36,11 @@ function makeIssueNode(
 			id: string;
 			body: string;
 			url: string;
-			createdAt: Date;
+			createdAt: string;
 			user: { name: string } | null;
 		}>;
 	}> = {},
-) {
+): BatchIssueNode {
 	const defaults = {
 		id: 'issue-1',
 		identifier: 'ENG-1',
@@ -37,8 +48,8 @@ function makeIssueNode(
 		description: 'A test issue',
 		url: 'https://linear.app/team/ENG-1',
 		priority: 2,
-		createdAt: new Date('2024-01-01T12:00:00Z'),
-		updatedAt: new Date('2024-01-01T12:05:00Z'),
+		createdAt: '2024-01-01T12:00:00.000Z',
+		updatedAt: '2024-01-01T12:05:00.000Z',
 		state: { name: 'In Progress' },
 		assignee: { name: 'Alice' },
 		creator: { name: 'Bob' },
@@ -55,41 +66,26 @@ function makeIssueNode(
 		priority: merged.priority,
 		createdAt: merged.createdAt,
 		updatedAt: merged.updatedAt,
-		// These return promises to mimic @linear/sdk lazy resolution
-		state: Promise.resolve(merged.state),
-		assignee: Promise.resolve(merged.assignee),
-		creator: Promise.resolve(merged.creator),
-		labels: () =>
-			Promise.resolve({
-				nodes: merged.labels,
-			}),
-		comments: () =>
-			Promise.resolve({
-				nodes: merged.comments.map((c) => ({
-					...c,
-					user: Promise.resolve(c.user),
-				})),
-			}),
+		state: merged.state,
+		assignee: merged.assignee,
+		creator: merged.creator,
+		labels: { nodes: merged.labels },
+		comments: { nodes: merged.comments },
 	};
 }
 
-function makeIssueConnection(
-	nodes: ReturnType<typeof makeIssueNode>[],
+function makeBatchResponse(
+	nodes: BatchIssueNode[],
 	hasNextPage = false,
 	endCursor?: string,
-) {
+): BatchIssuesResponse {
 	return {
-		nodes,
-		pageInfo: { hasNextPage, endCursor },
-	};
-}
-
-function makeMockClient(teamIssues: ReturnType<typeof makeIssueConnection>) {
-	return {
-		team: vi.fn().mockResolvedValue({
-			issues: vi.fn().mockResolvedValue(teamIssues),
-		}),
-		comments: vi.fn().mockResolvedValue({ nodes: [] }),
+		team: {
+			issues: {
+				nodes,
+				pageInfo: { hasNextPage, endCursor: endCursor ?? null },
+			},
+		},
 	};
 }
 
@@ -106,12 +102,8 @@ function getCacheDir() {
 	return dir;
 }
 
-async function createSource(
-	mockClient: ReturnType<typeof makeMockClient>,
-	overrides: Record<string, unknown> = {},
-) {
+async function createSource(overrides: Record<string, unknown> = {}) {
 	const source = new LinearSource();
-	// Stub env var
 	vi.stubEnv('LINEAR_API_KEY', 'test-api-key');
 
 	await source.init({
@@ -125,14 +117,13 @@ async function createSource(
 		},
 	});
 
-	// Replace client with mock
-	(source as unknown as { client: unknown }).client = mockClient;
 	return source;
 }
 
 describe('LinearSource', () => {
 	beforeEach(() => {
 		cacheDir = getCacheDir();
+		mockExecuteBatchQuery.mockReset();
 	});
 
 	afterEach(() => {
@@ -148,11 +139,11 @@ describe('LinearSource', () => {
 	describe('new issue detection', () => {
 		it('emits issue.created for issues created after checkpoint', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T12:02:00Z'),
-				updatedAt: new Date('2024-01-01T12:02:00Z'),
+				createdAt: '2024-01-01T12:02:00.000Z',
+				updatedAt: '2024-01-01T12:02:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -163,15 +154,14 @@ describe('LinearSource', () => {
 
 		it('does not emit for issues created before checkpoint', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T11:00:00Z'),
-				updatedAt: new Date('2024-01-01T12:02:00Z'),
+				createdAt: '2024-01-01T11:00:00.000Z',
+				updatedAt: '2024-01-01T12:02:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
-			// No events since this is the first time we see it but it's old
 			expect(result.events.length).toBe(0);
 		});
 	});
@@ -182,11 +172,10 @@ describe('LinearSource', () => {
 		it('emits state_changed when issue state changes between polls', async () => {
 			const issue1 = makeIssueNode({
 				state: { name: 'Todo' },
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			// First poll — seeds cache, emits issue.created
 			await source.poll('2024-01-01T12:00:00.000Z');
@@ -194,11 +183,9 @@ describe('LinearSource', () => {
 			// Second poll — state changed to In Progress
 			const issue2 = makeIssueNode({
 				state: { name: 'In Progress' },
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			const team2 = { issues: vi.fn().mockResolvedValue(conn2) };
-			client.team.mockResolvedValue(team2);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -213,23 +200,18 @@ describe('LinearSource', () => {
 		it('does not emit when state is unchanged', async () => {
 			const issue = makeIssueNode({
 				state: { name: 'In Progress' },
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const client = makeMockClient(conn);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue]));
+			const source = await createSource();
 
-			// First poll — seeds cache
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Second poll — same state
 			const issue2 = makeIssueNode({
 				state: { name: 'In Progress' },
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			const team2 = { issues: vi.fn().mockResolvedValue(conn2) };
-			client.team.mockResolvedValue(team2);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -246,21 +228,18 @@ describe('LinearSource', () => {
 		it('emits assignee_changed when assignee changes', async () => {
 			const issue1 = makeIssueNode({
 				assignee: { name: 'Alice' },
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Reassign to Bob
 			const issue2 = makeIssueNode({
 				assignee: { name: 'Bob' },
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			client.team.mockResolvedValue({ issues: vi.fn().mockResolvedValue(conn2) });
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -275,21 +254,18 @@ describe('LinearSource', () => {
 		it('emits assignee_changed when unassigned', async () => {
 			const issue1 = makeIssueNode({
 				assignee: { name: 'Alice' },
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Unassign
 			const issue2 = makeIssueNode({
 				assignee: null,
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			client.team.mockResolvedValue({ issues: vi.fn().mockResolvedValue(conn2) });
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -308,21 +284,18 @@ describe('LinearSource', () => {
 		it('emits priority_changed when priority changes', async () => {
 			const issue1 = makeIssueNode({
 				priority: 2,
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Escalate priority
 			const issue2 = makeIssueNode({
 				priority: 1,
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			client.team.mockResolvedValue({ issues: vi.fn().mockResolvedValue(conn2) });
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -341,21 +314,18 @@ describe('LinearSource', () => {
 		it('emits labels_changed when labels change', async () => {
 			const issue1 = makeIssueNode({
 				labels: [{ name: 'bug' }],
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Add 'urgent' label
 			const issue2 = makeIssueNode({
 				labels: [{ name: 'bug' }, { name: 'urgent' }],
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			client.team.mockResolvedValue({ issues: vi.fn().mockResolvedValue(conn2) });
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -370,21 +340,18 @@ describe('LinearSource', () => {
 		it('detects removed labels', async () => {
 			const issue1 = makeIssueNode({
 				labels: [{ name: 'bug' }, { name: 'urgent' }],
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn1 = makeIssueConnection([issue1]);
-			const client = makeMockClient(conn1);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue1]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Remove 'urgent' label
 			const issue2 = makeIssueNode({
 				labels: [{ name: 'bug' }],
-				updatedAt: new Date('2024-01-01T12:10:00Z'),
+				updatedAt: '2024-01-01T12:10:00.000Z',
 			});
-			const conn2 = makeIssueConnection([issue2]);
-			client.team.mockResolvedValue({ issues: vi.fn().mockResolvedValue(conn2) });
+			mockExecuteBatchQuery.mockResolvedValueOnce(makeBatchResponse([issue2]));
 
 			const result = await source.poll('2024-01-01T12:05:00.000Z');
 
@@ -397,26 +364,25 @@ describe('LinearSource', () => {
 		});
 	});
 
-	// ─── Comment Polling ────────────────────────────────────────────────────
+	// ─── Comment Polling (Batched) ──────────────────────────────────────────
 
 	describe('comment polling', () => {
-		it('emits comment.created for new comments on team issues', async () => {
+		it('emits comment.created for comments included in batch response', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T11:00:00Z'),
-				updatedAt: new Date('2024-01-01T12:05:00Z'),
+				createdAt: '2024-01-01T11:00:00.000Z',
+				updatedAt: '2024-01-01T12:05:00.000Z',
 				comments: [
 					{
 						id: 'comment-1',
 						body: 'Looks good',
 						url: 'https://linear.app/comment/1',
-						createdAt: new Date('2024-01-01T12:02:00Z'),
+						createdAt: '2024-01-01T12:02:00.000Z',
 						user: { name: 'Alice' },
 					},
 				],
 			});
-			const conn = makeIssueConnection([issue]);
-			const client = makeMockClient(conn);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -434,10 +400,10 @@ describe('LinearSource', () => {
 	describe('state cache persistence', () => {
 		it('persists state cache to disk after poll', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -453,7 +419,6 @@ describe('LinearSource', () => {
 		});
 
 		it('loads state cache from disk on init (survives restart)', async () => {
-			// Pre-seed a cache file
 			const cachePath = join(cacheDir, 'linear-test-state-cache.json');
 			const seeded: Record<string, CachedIssueState> = {
 				'issue-1': {
@@ -465,14 +430,13 @@ describe('LinearSource', () => {
 			};
 			writeFileSync(cachePath, JSON.stringify(seeded));
 
-			// The issue is now In Progress — should detect state change
 			const issue = makeIssueNode({
 				state: { name: 'In Progress' },
-				createdAt: new Date('2024-01-01T11:00:00Z'),
-				updatedAt: new Date('2024-01-01T12:05:00Z'),
+				createdAt: '2024-01-01T11:00:00.000Z',
+				updatedAt: '2024-01-01T12:05:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -489,26 +453,24 @@ describe('LinearSource', () => {
 			writeFileSync(cachePath, '{{not valid json}}');
 
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
-			// Should not throw
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 			expect(result.events.length).toBe(1); // new issue detected
 		});
 
 		it('saves state cache on shutdown', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Remove the cache file to prove shutdown re-saves it
 			const cachePath = join(cacheDir, 'linear-test-state-cache.json');
 			rmSync(cachePath);
 			expect(existsSync(cachePath)).toBe(false);
@@ -525,44 +487,29 @@ describe('LinearSource', () => {
 			const issue1 = makeIssueNode({
 				id: 'issue-1',
 				identifier: 'ENG-1',
-				createdAt: new Date('2024-01-01T12:01:00Z'),
+				createdAt: '2024-01-01T12:01:00.000Z',
 			});
 			const issue2 = makeIssueNode({
 				id: 'issue-2',
 				identifier: 'ENG-2',
-				createdAt: new Date('2024-01-01T12:02:00Z'),
+				createdAt: '2024-01-01T12:02:00.000Z',
 			});
 
-			const page1 = makeIssueConnection([issue1], true, 'cursor-1');
-			const page2 = makeIssueConnection([issue2], false);
-			const emptyConn = makeIssueConnection([]);
+			mockExecuteBatchQuery
+				.mockResolvedValueOnce(makeBatchResponse([issue1], true, 'cursor-1'))
+				.mockResolvedValueOnce(makeBatchResponse([issue2], false));
 
-			// Track issue poll calls vs comment poll calls
-			let issueCallCount = 0;
-			const issuesFn = vi.fn().mockImplementation((_opts: { after?: string }) => {
-				// pollComments also calls team.issues — return empty for that
-				issueCallCount++;
-				if (issueCallCount === 1) return page1;
-				if (issueCallCount === 2) return page2;
-				return emptyConn;
-			});
-
-			const client = {
-				team: vi.fn().mockResolvedValue({ issues: issuesFn }),
-				comments: vi.fn().mockResolvedValue({ nodes: [] }),
-			};
-
-			const source = await createSource(client);
+			const source = await createSource();
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Should have paginated — both issues detected
 			const newIssues = result.events.filter(
 				(e) => e.provenance.platform_event === 'issue.created',
 			);
 			expect(newIssues.length).toBe(2);
-			// Issue polling: first call has no cursor, second has cursor-1
-			expect(issuesFn.mock.calls[0][0].after).toBeUndefined();
-			expect(issuesFn.mock.calls[1][0].after).toBe('cursor-1');
+
+			// First call has no cursor, second has cursor-1
+			expect(mockExecuteBatchQuery.mock.calls[0][0].cursor).toBeUndefined();
+			expect(mockExecuteBatchQuery.mock.calls[1][0].cursor).toBe('cursor-1');
 		});
 	});
 
@@ -570,11 +517,10 @@ describe('LinearSource', () => {
 
 	describe('rate limiting', () => {
 		it('returns empty events on rate limit (429)', async () => {
-			const client = {
-				team: vi.fn().mockRejectedValue({ status: 429, message: 'Rate limited' }),
-				comments: vi.fn(),
-			};
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockRejectedValue(
+				Object.assign(new Error('Rate limited'), { status: 429 }),
+			);
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -583,14 +529,12 @@ describe('LinearSource', () => {
 		});
 
 		it('returns empty events on RATE_LIMITED GraphQL extension', async () => {
-			const client = {
-				team: vi.fn().mockRejectedValue({
+			mockExecuteBatchQuery.mockRejectedValue(
+				Object.assign(new Error('Rate limited'), {
 					extensions: { code: 'RATE_LIMITED' },
-					message: 'Rate limited',
 				}),
-				comments: vi.fn(),
-			};
-			const source = await createSource(client);
+			);
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -602,11 +546,10 @@ describe('LinearSource', () => {
 
 	describe('auth error handling', () => {
 		it('returns empty events on 401', async () => {
-			const client = {
-				team: vi.fn().mockRejectedValue({ status: 401, message: 'Unauthorized' }),
-				comments: vi.fn(),
-			};
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockRejectedValue(
+				Object.assign(new Error('Unauthorized'), { status: 401 }),
+			);
+			const source = await createSource();
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
@@ -616,11 +559,10 @@ describe('LinearSource', () => {
 		});
 
 		it('returns empty events on 403', async () => {
-			const client = {
-				team: vi.fn().mockRejectedValue({ status: 403, message: 'Forbidden' }),
-				comments: vi.fn(),
-			};
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockRejectedValue(
+				Object.assign(new Error('Forbidden'), { status: 403 }),
+			);
+			const source = await createSource();
 			vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
@@ -629,11 +571,8 @@ describe('LinearSource', () => {
 		});
 
 		it('rethrows unexpected errors', async () => {
-			const client = {
-				team: vi.fn().mockRejectedValue(new Error('Network failure')),
-				comments: vi.fn(),
-			};
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockRejectedValue(new Error('Network failure'));
+			const source = await createSource();
 
 			await expect(source.poll('2024-01-01T12:00:00.000Z')).rejects.toThrow('Network failure');
 		});
@@ -644,27 +583,24 @@ describe('LinearSource', () => {
 	describe('checkpoint advancement', () => {
 		it('advances checkpoint to latest event timestamp', async () => {
 			const issue = makeIssueNode({
-				createdAt: new Date('2024-01-01T12:05:00Z'),
-				updatedAt: new Date('2024-01-01T12:05:00Z'),
+				createdAt: '2024-01-01T12:05:00.000Z',
+				updatedAt: '2024-01-01T12:05:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
-			// Checkpoint should be the event's timestamp, not the original since
 			expect(result.checkpoint > '2024-01-01T12:00:00.000Z').toBe(true);
 		});
 
 		it('uses default 5-minute lookback when no checkpoint', async () => {
-			const conn = makeIssueConnection([]);
-			const client = makeMockClient(conn);
-			const source = await createSource(client);
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([]));
+			const source = await createSource();
 
 			const before = Date.now();
 			const result = await source.poll(null);
 
-			// Checkpoint should be roughly 5 minutes ago
 			const cpTime = new Date(result.checkpoint).getTime();
 			expect(cpTime).toBeGreaterThan(before - 6 * 60 * 1000);
 			expect(cpTime).toBeLessThanOrEqual(before);
@@ -675,7 +611,6 @@ describe('LinearSource', () => {
 
 	describe('multiple changes in one poll', () => {
 		it('detects state + assignee + priority + label changes simultaneously', async () => {
-			// Seed cache
 			const cachePath = join(cacheDir, 'linear-test-state-cache.json');
 			const seeded: Record<string, CachedIssueState> = {
 				'issue-1': {
@@ -687,17 +622,16 @@ describe('LinearSource', () => {
 			};
 			writeFileSync(cachePath, JSON.stringify(seeded));
 
-			// Everything changed
 			const issue = makeIssueNode({
 				state: { name: 'Done' },
 				assignee: { name: 'Bob' },
 				priority: 1,
 				labels: [{ name: 'bug' }, { name: 'urgent' }],
-				createdAt: new Date('2024-01-01T11:00:00Z'),
-				updatedAt: new Date('2024-01-01T12:05:00Z'),
+				createdAt: '2024-01-01T11:00:00.000Z',
+				updatedAt: '2024-01-01T12:05:00.000Z',
 			});
-			const conn = makeIssueConnection([issue]);
-			const source = await createSource(makeMockClient(conn));
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
 
 			const result = await source.poll('2024-01-01T12:00:00.000Z');
 
@@ -718,7 +652,6 @@ describe('LinearSource', () => {
 			vi.stubEnv('LINEAR_API_KEY', 'lin_test_123');
 
 			const source = new LinearSource();
-			// Should not throw
 			await source.init({
 				id: 'test',
 				connector: 'linear',
@@ -764,8 +697,54 @@ describe('LinearSource', () => {
 			});
 
 			expect(existsSync(newDir)).toBe(true);
-			// Cleanup
 			rmSync(newDir, { recursive: true, force: true });
+		});
+	});
+
+	// ─── Batch Query Integration ────────────────────────────────────────────
+
+	describe('batch query integration', () => {
+		it('passes correct parameters to executeBatchQuery', async () => {
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([]));
+			const source = await createSource({ project: 'MyProject' });
+
+			await source.poll('2024-01-01T12:00:00.000Z');
+
+			expect(mockExecuteBatchQuery).toHaveBeenCalledWith({
+				apiKey: 'test-api-key',
+				teamKey: 'ENG',
+				since: '2024-01-01T12:00:00.000Z',
+				projectName: 'MyProject',
+				cursor: undefined,
+				fetch: expect.any(Function),
+			});
+		});
+
+		it('fetches issues and comments in single batch', async () => {
+			const issue = makeIssueNode({
+				createdAt: '2024-01-01T12:01:00.000Z',
+				comments: [
+					{
+						id: 'comment-1',
+						body: 'Test comment',
+						url: 'https://linear.app/comment/1',
+						createdAt: '2024-01-01T12:02:00.000Z',
+						user: { name: 'Alice' },
+					},
+				],
+			});
+			mockExecuteBatchQuery.mockResolvedValue(makeBatchResponse([issue]));
+			const source = await createSource();
+
+			const result = await source.poll('2024-01-01T12:00:00.000Z');
+
+			// Both issue creation and comment should come from single batch call
+			expect(mockExecuteBatchQuery).toHaveBeenCalledTimes(1);
+			expect(result.events.length).toBe(2);
+			expect(result.events.map((e) => e.provenance.platform_event).sort()).toEqual([
+				'comment.created',
+				'issue.created',
+			]);
 		});
 	});
 });

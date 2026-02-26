@@ -1,19 +1,29 @@
 /**
  * Tests for GitHubSource polling logic.
- * Mocks Octokit to test all polling methods, pagination, dedup, error handling,
- * rate limiting, and initial lookback window.
+ *
+ * PR-related events (reviews, closed, opened, ready-for-review) now use a
+ * batched GraphQL query via executeBatchPRQuery. REST endpoints are still
+ * used for review comments, issue comments, workflow runs, and check suites.
  */
 
+import type { BatchPRResult } from '../graphql.js';
 import { GitHubSource } from '../source.js';
 
-// ─── Mock Octokit ────────────────────────────────────────────────────────────
+// ─── Mock the graphql module ────────────────────────────────────────────────
+
+vi.mock('../graphql.js', () => ({
+	executeBatchPRQuery: vi.fn(),
+}));
+
+import { executeBatchPRQuery } from '../graphql.js';
+
+const mockExecuteBatchPRQuery = vi.mocked(executeBatchPRQuery);
+
+// ─── Mock Octokit (for REST endpoints) ──────────────────────────────────────
 
 function createMockOctokit() {
 	const pulls = {
-		list: vi.fn(),
 		get: vi.fn(),
-		listReviews: vi.fn(),
-		listReviewComments: vi.fn(),
 		listReviewCommentsForRepo: vi.fn(),
 	};
 	const issues = {
@@ -30,11 +40,9 @@ function createMockOctokit() {
 	const paginate = vi.fn(async (endpoint: unknown, params: unknown) => {
 		const fn = endpoint as (...args: unknown[]) => Promise<{ data: unknown }>;
 		const result = await fn(params);
-		// For paginate, return the data array directly (Octokit paginate unwraps)
 		if (Array.isArray(result.data)) {
 			return result.data;
 		}
-		// For endpoints that nest (e.g., workflow_runs), paginate flattens
 		if (
 			result.data &&
 			typeof result.data === 'object' &&
@@ -47,11 +55,7 @@ function createMockOctokit() {
 		iterator: ReturnType<typeof vi.fn>;
 	};
 
-	// paginate.iterator — yields pages of {data, headers}
-	// Used by fetchUpdatedPulls, pollClosedPRs, pollOpenedPRs, pollReadyForReviewPRs,
-	// pollFailedWorkflowRuns
 	paginate.iterator = vi.fn((endpoint: unknown, params: unknown) => {
-		// Default: call the endpoint once and yield result as a single page
 		const fn = endpoint as (...args: unknown[]) => Promise<{ data: unknown }>;
 		return {
 			async *[Symbol.asyncIterator]() {
@@ -93,6 +97,7 @@ function makePR(overrides: Record<string, unknown> = {}) {
 		closed_at: null,
 		merged: false,
 		draft: false,
+		state: 'open',
 		html_url: 'https://github.com/owner/repo/pull/1',
 		user: { login: 'alice', type: 'User' },
 		head: { ref: 'feature-branch' },
@@ -171,6 +176,19 @@ function makeCheckSuite(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+/** Build a BatchPRResult for the mocked executeBatchPRQuery */
+function makeBatchResult(overrides: Partial<BatchPRResult> = {}): BatchPRResult {
+	return {
+		pulls: [],
+		reviews: [],
+		closedPRs: [],
+		openedPRs: [],
+		readyForReviewPRs: [],
+		rateLimit: { remaining: 4999, resetAt: new Date(Date.now() + 3600000) },
+		...overrides,
+	};
+}
+
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
 async function createSource(
@@ -179,7 +197,6 @@ async function createSource(
 	opts?: { authors?: string[]; initial_lookback?: string },
 ) {
 	const source = new GitHubSource();
-	// Use init to set up internal state, then override the octokit instance
 	process.env.GITHUB_TOKEN = 'test-token';
 	await source.init({
 		id: 'github-test',
@@ -192,7 +209,7 @@ async function createSource(
 			...(opts?.initial_lookback ? { initial_lookback: opts.initial_lookback } : {}),
 		},
 	});
-	// Replace the real octokit with mock
+	// Replace the real octokit with mock (for REST endpoints)
 	(source as unknown as Record<string, unknown>).octokit = mockOctokit;
 	return source;
 }
@@ -203,6 +220,7 @@ describe('GitHubSource', () => {
 	afterEach(() => {
 		process.env.GITHUB_TOKEN = undefined;
 		vi.restoreAllMocks();
+		mockExecuteBatchPRQuery.mockReset();
 	});
 
 	describe('init', () => {
@@ -254,14 +272,18 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollReviews', () => {
-		it('fetches PRs with pagination and returns review events', async () => {
+	describe('pollReviews (batch GraphQL)', () => {
+		it('fetches reviews via batch query and returns review events', async () => {
 			const mock = createMockOctokit();
 			const pr = makePR({ number: 1 });
 			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -270,73 +292,43 @@ describe('GitHubSource', () => {
 			expect(result.events[0].provenance.platform_event).toBe('pull_request.review_submitted');
 			expect(result.events[0].payload.review_state).toBe('approved');
 			expect(result.events[0].provenance.author).toBe('bob');
-			// paginate.iterator was called for fetchUpdatedPulls
-			expect(mock.paginate.iterator).toHaveBeenCalled();
+			expect(mockExecuteBatchPRQuery).toHaveBeenCalledTimes(1);
 		});
 
-		it('filters out reviews older than checkpoint', async () => {
+		it('handles multiple PRs with reviews from batch', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR({ number: 1 });
-			const oldReview = makeReview({ submitted_at: '2024-01-14T08:00:00Z' });
-			const newReview = makeReview({
-				submitted_at: '2024-01-15T10:00:00Z',
-				id: 101,
-			});
-
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [oldReview, newReview] });
-
-			const source = await createSource(['pull_request.review_submitted'], mock);
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			expect(result.events).toHaveLength(1);
-		});
-
-		it('handles multiple PRs with reviews', async () => {
-			const mock = createMockOctokit();
-			const pr1 = makePR({ number: 1 });
-			const pr2 = makePR({ number: 2, title: 'PR 2' });
+			const pr1 = makePR({ number: 1, updated_at: '2024-01-15T10:00:00Z' });
+			const pr2 = makePR({ number: 2, title: 'PR 2', updated_at: '2024-01-15T11:00:00Z' });
 			const review1 = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 			const review2 = makeReview({
 				submitted_at: '2024-01-15T11:00:00Z',
 				id: 102,
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr1, pr2] });
-			mock.pulls.listReviews
-				.mockResolvedValueOnce({ data: [review1] })
-				.mockResolvedValueOnce({ data: [review2] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr1, pr2],
+					reviews: [
+						{ review: review1, pr: pr1 },
+						{ review: review2, pr: pr2 },
+					],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
 			expect(result.events).toHaveLength(2);
 		});
-
-		it('skips individual PR errors without failing', async () => {
-			const mock = createMockOctokit();
-			const pr1 = makePR({ number: 1 });
-			const pr2 = makePR({ number: 2 });
-
-			mock.pulls.list.mockResolvedValue({ data: [pr1, pr2] });
-			mock.pulls.listReviews.mockRejectedValueOnce(new Error('Not found')).mockResolvedValueOnce({
-				data: [makeReview({ submitted_at: '2024-01-15T10:00:00Z' })],
-			});
-
-			const source = await createSource(['pull_request.review_submitted'], mock);
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			expect(result.events).toHaveLength(1);
-		});
 	});
 
-	describe('pollReviewComments', () => {
+	describe('pollReviewComments (REST)', () => {
 		it('returns review comment events with pagination', async () => {
 			const mock = createMockOctokit();
 			const pr = makePR();
 			const comment = makeReviewComment();
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult({ pulls: [pr] }));
 			mock.pulls.listReviewCommentsForRepo.mockResolvedValue({ data: [comment] });
 
 			const source = await createSource(['pull_request_review_comment'], mock);
@@ -350,16 +342,13 @@ describe('GitHubSource', () => {
 
 		it('fetches PR data when comment references a PR not in cache', async () => {
 			const mock = createMockOctokit();
-			// No PRs returned by fetchUpdatedPulls (simulates PR not in recent cache)
-			mock.pulls.list.mockResolvedValue({ data: [] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
-			// Comment references PR #42 which isn't in the pulls list
 			const comment = makeReviewComment({
 				pull_request_url: 'https://api.github.com/repos/owner/repo/pulls/42',
 			});
 			mock.pulls.listReviewCommentsForRepo.mockResolvedValue({ data: [comment] });
 
-			// pulls.get returns the full PR with user data
 			const fetchedPR = makePR({
 				number: 42,
 				title: 'Fetched PR',
@@ -377,9 +366,8 @@ describe('GitHubSource', () => {
 
 		it('caches fetched PR so subsequent comments skip the API call', async () => {
 			const mock = createMockOctokit();
-			mock.pulls.list.mockResolvedValue({ data: [] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
-			// Two comments on the same uncached PR #42
 			const comment1 = makeReviewComment({
 				id: 201,
 				pull_request_url: 'https://api.github.com/repos/owner/repo/pulls/42',
@@ -404,23 +392,19 @@ describe('GitHubSource', () => {
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
 			expect(result.events).toHaveLength(2);
-			// Both events should have the correct pr_author
 			expect(result.events[0].provenance.pr_author).toBe('alice');
 			expect(result.events[1].provenance.pr_author).toBe('alice');
-			// pulls.get should only have been called once (cached for second comment)
 			expect(mock.pulls.get).toHaveBeenCalledTimes(1);
 		});
 
 		it('falls back to unknown pr_author when fetch fails', async () => {
 			const mock = createMockOctokit();
-			mock.pulls.list.mockResolvedValue({ data: [] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
 			const comment = makeReviewComment({
 				pull_request_url: 'https://api.github.com/repos/owner/repo/pulls/99',
 			});
 			mock.pulls.listReviewCommentsForRepo.mockResolvedValue({ data: [comment] });
-
-			// Simulate API failure
 			mock.pulls.get.mockRejectedValue(new Error('Not found'));
 
 			const source = await createSource(['pull_request_review_comment'], mock);
@@ -434,29 +418,6 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('PR dedup — shared pulls.list', () => {
-		it('calls paginate.iterator only once when both reviews and comments are subscribed', async () => {
-			const mock = createMockOctokit();
-			const pr = makePR();
-			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
-			const comment = makeReviewComment();
-
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
-			mock.pulls.listReviewCommentsForRepo.mockResolvedValue({ data: [comment] });
-
-			const source = await createSource(
-				['pull_request.review_submitted', 'pull_request_review_comment'],
-				mock,
-			);
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			expect(result.events).toHaveLength(2);
-			// paginate.iterator should have been called only once (for fetchUpdatedPulls)
-			expect(mock.paginate.iterator).toHaveBeenCalledTimes(1);
-		});
-	});
-
 	describe('review state dedup — review_id in events (Fixes #37)', () => {
 		it('includes review_id in provenance and payload', async () => {
 			const mock = createMockOctokit();
@@ -467,8 +428,12 @@ describe('GitHubSource', () => {
 				submitted_at: '2024-01-15T10:00:00Z',
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -480,7 +445,7 @@ describe('GitHubSource', () => {
 
 		it('two reviews on same PR with different states produce different review_ids', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR({ number: 1 });
+			const pr = makePR({ number: 1, updated_at: '2024-01-15T10:01:00Z' });
 			const commentReview = makeReview({
 				id: 100,
 				state: 'commented',
@@ -496,19 +461,22 @@ describe('GitHubSource', () => {
 				user: { login: 'alice', type: 'User' },
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({
-				data: [commentReview, approvalReview],
-			});
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [
+						{ review: commentReview, pr },
+						{ review: approvalReview, pr },
+					],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
 			expect(result.events).toHaveLength(2);
-			// Different review IDs
 			expect(result.events[0].provenance.review_id).toBe(100);
 			expect(result.events[1].provenance.review_id).toBe(101);
-			// Different review states
 			expect(result.events[0].provenance.review_state).toBe('commented');
 			expect(result.events[1].provenance.review_state).toBe('approved');
 		});
@@ -522,31 +490,36 @@ describe('GitHubSource', () => {
 				submitted_at: '2024-01-15T10:00:00Z',
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 
-			// First poll
 			const result1 = await source.poll('2024-01-15T09:00:00Z');
 			expect(result1.events).toHaveLength(1);
 
-			// Simulate cache miss by updating PR timestamp so it gets re-fetched
+			// Second poll: PR has updated_at changed, bypassing cache
 			const pr2 = makePR({ number: 1, updated_at: '2024-01-15T10:05:00Z' });
-			mock.pulls.list.mockResolvedValue({ data: [pr2] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr2],
+					reviews: [{ review, pr: pr2 }],
+				}),
+			);
 
-			// Second poll with same checkpoint returns same review
 			const result2 = await source.poll('2024-01-15T09:00:00Z');
 			expect(result2.events).toHaveLength(1);
 
-			// Both events carry the same review_id — dedup can use this
 			expect(result1.events[0].provenance.review_id).toBe(200);
 			expect(result2.events[0].provenance.review_id).toBe(200);
 		});
 	});
 
-	describe('pollIssueComments', () => {
+	describe('pollIssueComments (REST)', () => {
 		it('returns issue comment events', async () => {
 			const mock = createMockOctokit();
 			const comment = makeIssueComment();
@@ -582,7 +555,7 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollClosedPRs', () => {
+	describe('pollClosedPRs (batch GraphQL)', () => {
 		it('returns closed PR events', async () => {
 			const mock = createMockOctokit();
 			const pr = makePR({
@@ -591,7 +564,7 @@ describe('GitHubSource', () => {
 				merged: false,
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult({ pulls: [pr], closedPRs: [pr] }));
 
 			const source = await createSource(['pull_request.closed'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -610,7 +583,7 @@ describe('GitHubSource', () => {
 				merged_by: { login: 'bob' },
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult({ pulls: [pr], closedPRs: [pr] }));
 
 			const source = await createSource(['pull_request.merged'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -621,12 +594,12 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollOpenedPRs (new event)', () => {
+	describe('pollOpenedPRs (batch GraphQL)', () => {
 		it('returns opened PR events', async () => {
 			const mock = createMockOctokit();
 			const pr = makePR({ created_at: '2024-01-15T10:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult({ pulls: [pr], openedPRs: [pr] }));
 
 			const source = await createSource(['pull_request.opened'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -638,11 +611,11 @@ describe('GitHubSource', () => {
 			expect(result.events[0].payload.base_ref).toBe('main');
 		});
 
-		it('filters out PRs created before checkpoint', async () => {
+		it('filters out PRs created before checkpoint (handled by batch)', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR({ created_at: '2024-01-14T08:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			// Batch returns no openedPRs (the filtering is done in graphql.ts)
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
 			const source = await createSource(['pull_request.opened'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -651,7 +624,7 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollReadyForReviewPRs (new event)', () => {
+	describe('pollReadyForReviewPRs (batch GraphQL)', () => {
 		it('returns non-draft PRs updated after checkpoint', async () => {
 			const mock = createMockOctokit();
 			const pr = makePR({
@@ -659,7 +632,9 @@ describe('GitHubSource', () => {
 				updated_at: '2024-01-15T10:00:00Z',
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({ pulls: [pr], readyForReviewPRs: [pr] }),
+			);
 
 			const source = await createSource(['pull_request.ready_for_review'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -669,14 +644,11 @@ describe('GitHubSource', () => {
 			expect(result.events[0].payload.action).toBe('ready_for_review');
 		});
 
-		it('excludes draft PRs', async () => {
+		it('excludes draft PRs (handled by batch)', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR({
-				draft: true,
-				updated_at: '2024-01-15T10:00:00Z',
-			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
+			// Batch returns no readyForReviewPRs for draft PRs
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
 			const source = await createSource(['pull_request.ready_for_review'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -685,7 +657,7 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollFailedWorkflowRuns', () => {
+	describe('pollFailedWorkflowRuns (REST)', () => {
 		it('returns failed workflow run events', async () => {
 			const mock = createMockOctokit();
 			const run = makeWorkflowRun();
@@ -704,7 +676,7 @@ describe('GitHubSource', () => {
 		});
 	});
 
-	describe('pollCheckSuites (new event)', () => {
+	describe('pollCheckSuites (REST)', () => {
 		it('returns completed check suite events', async () => {
 			const mock = createMockOctokit();
 			const suite = makeCheckSuite();
@@ -746,14 +718,7 @@ describe('GitHubSource', () => {
 			const mock = createMockOctokit();
 			const error = Object.assign(new Error('rate limited'), { status: 429 });
 
-			mock.pulls.list.mockRejectedValue(error);
-			mock.paginate.mockRejectedValue(error);
-			mock.paginate.iterator.mockReturnValue({
-				// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-				async *[Symbol.asyncIterator]() {
-					throw error;
-				},
-			});
+			mockExecuteBatchPRQuery.mockRejectedValue(error);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -767,14 +732,7 @@ describe('GitHubSource', () => {
 			const mock = createMockOctokit();
 			const error = Object.assign(new Error('Bad credentials'), { status: 401 });
 
-			mock.pulls.list.mockRejectedValue(error);
-			mock.paginate.mockRejectedValue(error);
-			mock.paginate.iterator.mockReturnValue({
-				// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-				async *[Symbol.asyncIterator]() {
-					throw error;
-				},
-			});
+			mockExecuteBatchPRQuery.mockRejectedValue(error);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -789,14 +747,7 @@ describe('GitHubSource', () => {
 			const mock = createMockOctokit();
 			const error = Object.assign(new Error('Forbidden'), { status: 403 });
 
-			mock.pulls.list.mockRejectedValue(error);
-			mock.paginate.mockRejectedValue(error);
-			mock.paginate.iterator.mockReturnValue({
-				// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-				async *[Symbol.asyncIterator]() {
-					throw error;
-				},
-			});
+			mockExecuteBatchPRQuery.mockRejectedValue(error);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -810,14 +761,7 @@ describe('GitHubSource', () => {
 			const mock = createMockOctokit();
 			const error = new Error('Network failure');
 
-			mock.pulls.list.mockRejectedValue(error);
-			mock.paginate.mockRejectedValue(error);
-			mock.paginate.iterator.mockReturnValue({
-				// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-				async *[Symbol.asyncIterator]() {
-					throw error;
-				},
-			});
+			mockExecuteBatchPRQuery.mockRejectedValue(error);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			await expect(source.poll('2024-01-15T09:00:00Z')).rejects.toThrow('Network failure');
@@ -827,7 +771,7 @@ describe('GitHubSource', () => {
 	describe('author filtering', () => {
 		it('filters events by author when authors config is set', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR();
+			const pr = makePR({ updated_at: '2024-01-15T10:00:00Z' });
 			const reviewByAlice = makeReview({
 				submitted_at: '2024-01-15T10:00:00Z',
 				user: { login: 'alice', type: 'User' },
@@ -838,10 +782,15 @@ describe('GitHubSource', () => {
 				id: 101,
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({
-				data: [reviewByAlice, reviewByBob],
-			});
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [
+						{ review: reviewByAlice, pr },
+						{ review: reviewByBob, pr },
+					],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock, {
 				authors: ['bob'],
@@ -854,7 +803,7 @@ describe('GitHubSource', () => {
 
 		it('returns all events when no authors filter', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR();
+			const pr = makePR({ updated_at: '2024-01-15T10:00:00Z' });
 			const review1 = makeReview({
 				submitted_at: '2024-01-15T10:00:00Z',
 				user: { login: 'alice', type: 'User' },
@@ -865,8 +814,15 @@ describe('GitHubSource', () => {
 				id: 101,
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review1, review2] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [
+						{ review: review1, pr },
+						{ review: review2, pr },
+					],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -878,35 +834,39 @@ describe('GitHubSource', () => {
 	describe('checkpoint advancement', () => {
 		it('advances checkpoint to latest event timestamp', async () => {
 			const mock = createMockOctokit();
-			const pr = makePR();
+			const pr = makePR({ updated_at: '2024-01-15T12:00:00Z' });
 			const review1 = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 			const review2 = makeReview({
 				submitted_at: '2024-01-15T12:00:00Z',
 				id: 101,
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review1, review2] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [
+						{ review: review1, pr },
+						{ review: review2, pr },
+					],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
-			// Checkpoint should be the latest event's timestamp
 			expect(result.checkpoint > '2024-01-15T09:00:00Z').toBe(true);
 		});
 
 		it('returns lookback-based checkpoint when no prior checkpoint and no events', async () => {
 			const mock = createMockOctokit();
-			mock.pulls.list.mockResolvedValue({ data: [] });
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const before = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 			const result = await source.poll(null);
 
 			expect(result.events).toHaveLength(0);
-			// Checkpoint should be approximately 7 days ago, not epoch
 			expect(result.checkpoint > '2020-01-01T00:00:00Z').toBe(true);
-			// Should be within a few seconds of the 7-day lookback
 			const checkpointDate = new Date(result.checkpoint);
 			const lookbackDate = new Date(before);
 			expect(Math.abs(checkpointDate.getTime() - lookbackDate.getTime())).toBeLessThan(5000);
@@ -922,34 +882,43 @@ describe('GitHubSource', () => {
 			});
 			const review = makeReview({ submitted_at: new Date().toISOString() });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll(null);
 
-			// Should return the recent event (within 7d lookback)
 			expect(result.events).toHaveLength(1);
 		});
 
 		it('respects custom initial_lookback config', async () => {
 			const mock = createMockOctokit();
-			// PR from 2 days ago — within 3d lookback but outside 1d
 			const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
 			const pr = makePR({ updated_at: twoDaysAgo });
 			const review = makeReview({ submitted_at: twoDaysAgo });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			// With 1d lookback, batch still returns the data — but the since filter
+			// excludes the 2-day-old review (batch filtering happens in graphql.ts)
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
-			// With 1d lookback, the 2-day-old review should be filtered out
 			const source1d = await createSource(['pull_request.review_submitted'], mock, {
 				initial_lookback: '1d',
 			});
 			const result1d = await source1d.poll(null);
 			expect(result1d.events).toHaveLength(0);
 
-			// With 3d lookback, it should be included
+			// With 3d lookback, the review is included
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
+
 			const source3d = await createSource(['pull_request.review_submitted'], mock, {
 				initial_lookback: '3d',
 			});
@@ -962,11 +931,14 @@ describe('GitHubSource', () => {
 			const pr = makePR();
 			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
-			// Explicit checkpoint from months ago — should use it, not lookback
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
 			expect(result.events).toHaveLength(1);
@@ -980,8 +952,12 @@ describe('GitHubSource', () => {
 			const pr = makePR({ updated_at: recentDate });
 			const review = makeReview({ submitted_at: recentDate });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll(null);
@@ -999,8 +975,12 @@ describe('GitHubSource', () => {
 				user: { login: 'dependabot[bot]', type: 'Bot' },
 			});
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [botReview] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review: botReview, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -1016,8 +996,12 @@ describe('GitHubSource', () => {
 			const pr = makePR();
 			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const result = await source.poll('2024-01-15T09:00:00Z');
@@ -1034,44 +1018,6 @@ describe('GitHubSource', () => {
 	});
 
 	describe('rate limit awareness', () => {
-		it('returns partial results when rate limited mid-poll (429)', async () => {
-			const mock = createMockOctokit();
-			const comment = makeIssueComment();
-			const rateLimitError = Object.assign(new Error('rate limited'), {
-				status: 429,
-				response: {
-					headers: {
-						'x-ratelimit-remaining': '0',
-						'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
-					},
-				},
-			});
-
-			// issue_comment succeeds via paginate(), then closedPRs throws 429 via iterator
-			mock.issues.listCommentsForRepo.mockResolvedValue({ data: [comment] });
-			mock.paginate.mockResolvedValueOnce([comment]); // issue comments
-			// pollClosedPRs now uses paginate.iterator — override it to throw
-			mock.paginate.iterator.mockImplementation(() => {
-				return {
-					// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-					async *[Symbol.asyncIterator]() {
-						throw rateLimitError;
-					},
-				};
-			});
-
-			const source = await createSource(['issue_comment', 'pull_request.closed'], mock);
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			// Should have returned the issue comment events collected before the error
-			expect(result.events.length).toBeGreaterThanOrEqual(1);
-			expect(consoleSpy).toHaveBeenCalledWith(
-				expect.stringContaining('[github] Failed to poll closed PRs'),
-			);
-			consoleSpy.mockRestore();
-		});
-
 		it('treats 403 with rate limit state as rate limit, not auth error', async () => {
 			const mock = createMockOctokit();
 			const rateLimitError = Object.assign(new Error('API rate limit exceeded'), {
@@ -1084,13 +1030,7 @@ describe('GitHubSource', () => {
 				},
 			});
 
-			mock.pulls.list.mockRejectedValue(rateLimitError);
-			mock.paginate.iterator.mockReturnValue({
-				// biome-ignore lint/correctness/useYield: mock iterator that throws before yielding
-				async *[Symbol.asyncIterator]() {
-					throw rateLimitError;
-				},
-			});
+			mockExecuteBatchPRQuery.mockRejectedValue(rateLimitError);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1098,7 +1038,6 @@ describe('GitHubSource', () => {
 			const result = await source.poll('2024-01-15T09:00:00Z');
 
 			expect(result.events).toHaveLength(0);
-			// Should warn about rate limit, NOT log auth error
 			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Rate limited'));
 			expect(errorSpy).not.toHaveBeenCalled();
 			consoleSpy.mockRestore();
@@ -1110,8 +1049,12 @@ describe('GitHubSource', () => {
 			const pr = makePR();
 			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 
@@ -1134,20 +1077,14 @@ describe('GitHubSource', () => {
 	describe('epoch checkpoint treated as no checkpoint', () => {
 		it('applies lookback window when checkpoint is epoch', async () => {
 			const mock = createMockOctokit();
-			// PR from 30 days ago — outside 7d lookback
-			const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-			const pr = makePR({ updated_at: oldDate });
-			const review = makeReview({ submitted_at: oldDate });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			// Batch returns nothing for the lookback window (old data filtered out)
+			mockExecuteBatchPRQuery.mockResolvedValue(makeBatchResult());
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
-			// Epoch checkpoint should trigger lookback, filtering out the 30-day-old event
 			const result = await source.poll('1970-01-01T00:00:00.000Z');
 
 			expect(result.events).toHaveLength(0);
-			// Checkpoint should be ~7 days ago, not epoch
 			expect(result.checkpoint > '2020-01-01T00:00:00Z').toBe(true);
 		});
 
@@ -1157,121 +1094,43 @@ describe('GitHubSource', () => {
 			const pr = makePR({ updated_at: recentDate });
 			const review = makeReview({ submitted_at: recentDate });
 
-			mock.pulls.list.mockResolvedValue({ data: [pr] });
-			mock.pulls.listReviews.mockResolvedValue({ data: [review] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
-			// Epoch checkpoint — recent events should still be returned via lookback
 			const result = await source.poll('1970-01-01T00:00:00.000Z');
 
 			expect(result.events).toHaveLength(1);
 		});
 	});
 
-	describe('fetchUpdatedPulls early termination', () => {
-		it('stops paginating when all PRs on a page are older than since', async () => {
+	describe('batch GraphQL pagination', () => {
+		it('executeBatchPRQuery handles pagination internally (single mock call)', async () => {
 			const mock = createMockOctokit();
-			const recentPR = makePR({
-				number: 1,
-				updated_at: '2024-01-15T10:00:00Z',
-			});
-			const oldPR = makePR({
-				number: 2,
-				updated_at: '2024-01-10T10:00:00Z',
-			});
+			const pr = makePR();
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
 
-			let pageCount = 0;
-			mock.paginate.iterator.mockReturnValue({
-				async *[Symbol.asyncIterator]() {
-					pageCount++;
-					yield { data: [recentPR], headers: {} };
-					pageCount++;
-					// Second page: all old PRs — should stop here
-					yield { data: [oldPR], headers: {} };
-					pageCount++;
-					// Third page: should never be reached
-					yield { data: [oldPR], headers: {} };
-				},
-			});
-			mock.pulls.listReviews.mockResolvedValue({ data: [] });
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+				}),
+			);
 
 			const source = await createSource(['pull_request.review_submitted'], mock);
 			await source.poll('2024-01-15T09:00:00Z');
 
-			// Should have only fetched 2 pages (stopped after finding all-old page)
-			expect(pageCount).toBe(2);
+			// Only one call to batch query — pagination is internal
+			expect(mockExecuteBatchPRQuery).toHaveBeenCalledTimes(1);
 		});
 	});
 
-	describe('pagination early-exit for poll methods', () => {
-		it('pollClosedPRs stops paginating when all PRs on a page are older than since', async () => {
-			const mock = createMockOctokit();
-			const recentPR = makePR({
-				number: 1,
-				state: 'closed',
-				updated_at: '2024-01-15T10:00:00Z',
-				closed_at: '2024-01-15T10:00:00Z',
-			});
-			const oldPR = makePR({
-				number: 2,
-				state: 'closed',
-				updated_at: '2024-01-10T10:00:00Z',
-				closed_at: '2024-01-10T10:00:00Z',
-			});
-
-			let pageCount = 0;
-			mock.paginate.iterator.mockReturnValue({
-				async *[Symbol.asyncIterator]() {
-					pageCount++;
-					yield { data: [recentPR], headers: {} };
-					pageCount++;
-					yield { data: [oldPR], headers: {} };
-					pageCount++;
-					// Should never reach here
-					yield { data: [oldPR], headers: {} };
-				},
-			});
-
-			const source = await createSource(['pull_request.closed'], mock);
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			expect(pageCount).toBe(2);
-			expect(result.events).toHaveLength(1);
-		});
-
-		it('pollOpenedPRs stops paginating when all PRs on a page are older than since', async () => {
-			const mock = createMockOctokit();
-			const recentPR = makePR({
-				number: 1,
-				created_at: '2024-01-15T10:00:00Z',
-				updated_at: '2024-01-15T10:00:00Z',
-			});
-			const oldPR = makePR({
-				number: 2,
-				created_at: '2024-01-10T10:00:00Z',
-				updated_at: '2024-01-10T10:00:00Z',
-			});
-
-			let pageCount = 0;
-			mock.paginate.iterator.mockReturnValue({
-				async *[Symbol.asyncIterator]() {
-					pageCount++;
-					yield { data: [recentPR], headers: {} };
-					pageCount++;
-					yield { data: [oldPR], headers: {} };
-					pageCount++;
-					yield { data: [oldPR], headers: {} };
-				},
-			});
-
-			const source = await createSource(['pull_request.opened'], mock);
-			const result = await source.poll('2024-01-15T09:00:00Z');
-
-			expect(pageCount).toBe(2);
-			expect(result.events).toHaveLength(1);
-		});
-
-		it('pollFailedWorkflowRuns stops paginating when all runs on a page are older than since', async () => {
+	describe('workflow run pagination early-exit (REST)', () => {
+		it('stops paginating when all runs on a page are older than since', async () => {
 			const mock = createMockOctokit();
 			const recentRun = makeWorkflowRun({
 				id: 1,
@@ -1299,6 +1158,36 @@ describe('GitHubSource', () => {
 
 			expect(pageCount).toBe(2);
 			expect(result.events).toHaveLength(1);
+		});
+	});
+
+	describe('batch and REST combined', () => {
+		it('single batch call serves both reviews and closed PRs', async () => {
+			const mock = createMockOctokit();
+			const pr = makePR({
+				number: 1,
+				state: 'closed',
+				closed_at: '2024-01-15T10:00:00Z',
+				merged: false,
+			});
+			const review = makeReview({ submitted_at: '2024-01-15T10:00:00Z' });
+
+			mockExecuteBatchPRQuery.mockResolvedValue(
+				makeBatchResult({
+					pulls: [pr],
+					reviews: [{ review, pr }],
+					closedPRs: [pr],
+				}),
+			);
+
+			const source = await createSource(
+				['pull_request.review_submitted', 'pull_request.closed'],
+				mock,
+			);
+			const result = await source.poll('2024-01-15T09:00:00Z');
+
+			expect(result.events).toHaveLength(2);
+			expect(mockExecuteBatchPRQuery).toHaveBeenCalledTimes(1);
 		});
 	});
 

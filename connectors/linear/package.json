@@ -12,8 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@orgloop/sdk": "workspace:*",
-    "@linear/sdk": "^75.0.0"
+    "@orgloop/sdk": "workspace:*"
   },
   "orgloop": {
     "type": "connector",
