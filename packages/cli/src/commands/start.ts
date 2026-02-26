@@ -598,6 +598,22 @@ async function startAction(
 				output.info(`Logs: ${LOG_DIR}`);
 			}
 		} else {
+			// Check for already-running daemon — auto-register if found (#46)
+			const daemonInfo = await getDaemonInfo();
+
+			if (daemonInfo) {
+				// Daemon is running — register this project's module into it
+				try {
+					await registerIntoRunningDaemon(daemonInfo.port, globalOpts.config as string | undefined);
+				} catch (err) {
+					output.error(
+						`Failed to register module: ${err instanceof Error ? err.message : String(err)}`,
+					);
+					process.exitCode = 1;
+				}
+				return;
+			}
+
 			await runForeground(globalOpts.config as string | undefined, opts.force);
 		}
 	} catch (err) {

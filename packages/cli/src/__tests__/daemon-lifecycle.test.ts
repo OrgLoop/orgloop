@@ -815,6 +815,76 @@ describe('full daemon lifecycle', () => {
 	});
 });
 
+// ─── Auto-register detection (issue #46) ─────────────────────────────────────
+
+describe('auto-register into running daemon (#46)', () => {
+	let portFile: string;
+
+	beforeEach(() => {
+		portFile = join(testDir, 'runtime.port');
+	});
+
+	it('detects running daemon via PID + port files for auto-register', async () => {
+		// Simulate a running daemon: PID file with current process, port file with a port
+		await writeFile(pidFile, String(process.pid), 'utf-8');
+		await writeFile(portFile, '4800', 'utf-8');
+
+		// Read PID and verify it's running (same logic as getDaemonInfo)
+		const pidStr = await readFile(pidFile, 'utf-8');
+		const pid = Number.parseInt(pidStr.trim(), 10);
+		expect(Number.isNaN(pid)).toBe(false);
+		expect(isProcessRunning(pid)).toBe(true);
+
+		// Read port
+		const portStr = await readFile(portFile, 'utf-8');
+		const port = Number.parseInt(portStr.trim(), 10);
+		expect(Number.isNaN(port)).toBe(false);
+		expect(port).toBe(4800);
+
+		// Both conditions met → should auto-register (not start foreground)
+		const shouldAutoRegister = !Number.isNaN(pid) && isProcessRunning(pid) && !Number.isNaN(port);
+		expect(shouldAutoRegister).toBe(true);
+	});
+
+	it('falls through to foreground when no daemon is running', async () => {
+		// No PID file → getDaemonInfo returns null → foreground start
+		let daemonDetected = false;
+		try {
+			await readFile(pidFile, 'utf-8');
+			daemonDetected = true;
+		} catch {
+			// No PID file — no daemon running
+		}
+		expect(daemonDetected).toBe(false);
+	});
+
+	it('falls through to foreground when PID is stale', async () => {
+		// Stale PID file → process not running → foreground start
+		await writeFile(pidFile, '99999999', 'utf-8');
+		await writeFile(portFile, '4800', 'utf-8');
+
+		const pidStr = await readFile(pidFile, 'utf-8');
+		const pid = Number.parseInt(pidStr.trim(), 10);
+
+		const shouldAutoRegister = !Number.isNaN(pid) && isProcessRunning(pid);
+		expect(shouldAutoRegister).toBe(false);
+	});
+
+	it('falls through to foreground when port file is missing', async () => {
+		// PID file exists but no port file → can't auto-register
+		await writeFile(pidFile, String(process.pid), 'utf-8');
+
+		let portAvailable = false;
+		try {
+			await readFile(portFile, 'utf-8');
+			portAvailable = true;
+		} catch {
+			// No port file
+		}
+		expect(portAvailable).toBe(false);
+	});
+});
+
 // ─── waitForExit ─────────────────────────────────────────────────────────────
 
 describe('waitForExit', () => {
