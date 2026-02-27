@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { assertLifecycleConformance } from '@orgloop/sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeSource } from '../source.js';
 
@@ -85,15 +86,7 @@ describe('ClaudeCodeSource', () => {
 		});
 
 		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-123',
-			working_directory: '/tmp/test',
-			duration_seconds: 120,
-			exit_status: 0,
-			summary: 'Task completed',
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
+		const req = createMockRequest(JSON.stringify(samplePayload));
 		const res = createMockResponse();
 		const events = await handler(req, res);
 
@@ -621,5 +614,230 @@ describe('ClaudeCodeSource buffer persistence', () => {
 
 		const result = await source.poll(null);
 		expect(result.events).toHaveLength(0);
+	});
+});
+
+// ─── Lifecycle Contract Conformance ───────────────────────────────────────────
+
+describe('ClaudeCodeSource lifecycle contract', () => {
+	let source: ClaudeCodeSource;
+
+	beforeEach(async () => {
+		source = new ClaudeCodeSource();
+		await source.init({
+			id: 'claude-code',
+			connector: '@orgloop/connector-claude-code',
+			config: {},
+		});
+	});
+
+	it('stop hook (exit 0) emits completed/success lifecycle event', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-ok', exit_status: 0, duration_seconds: 60 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		expect(event.type).toBe('actor.stopped');
+		expect(event.provenance.platform_event).toBe('session.completed');
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('completed');
+		expect(lc.terminal).toBe(true);
+		expect(lc.outcome).toBe('success');
+		expect(lc.reason).toBe('exit_code_0');
+		expect(lc.dedupe_key).toBe('claude-code:sess-ok:completed');
+	});
+
+	it('stop hook (exit 1) emits failed/failure lifecycle event', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-fail', exit_status: 1, duration_seconds: 10 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		expect(event.type).toBe('actor.stopped');
+		expect(event.provenance.platform_event).toBe('session.failed');
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('failed');
+		expect(lc.terminal).toBe(true);
+		expect(lc.outcome).toBe('failure');
+		expect(lc.reason).toBe('exit_code_1');
+	});
+
+	it('stop hook (SIGINT/130) emits stopped/cancelled lifecycle event', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-int', exit_status: 130, duration_seconds: 5 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		expect(event.type).toBe('actor.stopped');
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('stopped');
+		expect(lc.terminal).toBe(true);
+		expect(lc.outcome).toBe('cancelled');
+		expect(lc.reason).toBe('sigint');
+	});
+
+	it('stop hook (SIGTERM/143) emits stopped/cancelled lifecycle event', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-term', exit_status: 143, duration_seconds: 5 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('stopped');
+		expect(lc.outcome).toBe('cancelled');
+		expect(lc.reason).toBe('sigterm');
+	});
+
+	it('stop hook (SIGKILL/137) emits stopped/cancelled lifecycle event', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-kill', exit_status: 137, duration_seconds: 5 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('stopped');
+		expect(lc.outcome).toBe('cancelled');
+		expect(lc.reason).toBe('sigkill');
+	});
+
+	it('start hook emits started lifecycle event (resource.changed)', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({
+				session_id: 'sess-new',
+				cwd: '/home/user/project',
+				hook_type: 'start',
+			}),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		expect(event.type).toBe('resource.changed');
+		expect(event.provenance.platform_event).toBe('session.started');
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('started');
+		expect(lc.terminal).toBe(false);
+		expect(lc.outcome).toBeUndefined();
+		expect(lc.dedupe_key).toBe('claude-code:sess-new:started');
+
+		const sess = event.payload.session as Record<string, unknown>;
+		expect(sess.id).toBe('sess-new');
+		expect(sess.adapter).toBe('claude-code');
+		expect(sess.harness).toBe('claude-code');
+		expect(sess.cwd).toBe('/home/user/project');
+		expect(sess.started_at).toBeDefined();
+		expect(sess.ended_at).toBeUndefined();
+	});
+
+	it('defaults hook_type to stop for backward compatibility', async () => {
+		const handler = source.webhook();
+		// No hook_type field — should default to stop behavior
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-legacy', exit_status: 0, duration_seconds: 30 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		assertLifecycleConformance(event);
+		expect(event.type).toBe('actor.stopped');
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('completed');
+		expect(lc.terminal).toBe(true);
+	});
+
+	it('preserves backward-compatible payload fields alongside lifecycle', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(JSON.stringify(samplePayload));
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		// Lifecycle fields present
+		expect(event.payload.lifecycle).toBeDefined();
+		expect(event.payload.session).toBeDefined();
+
+		// Backward-compatible fields also present
+		expect(event.payload.session_id).toBe('sess-123');
+		expect(event.payload.working_directory).toBe('/tmp/test');
+		expect(event.payload.duration_seconds).toBe(120);
+		expect(event.payload.exit_status).toBe(0);
+		expect(event.payload.summary).toBe('Task completed');
+	});
+
+	it('session.harness is always claude-code', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(JSON.stringify(samplePayload));
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		const sess = event.payload.session as Record<string, unknown>;
+		expect(sess.harness).toBe('claude-code');
+	});
+
+	it('dedupe_key is unique per session + phase', async () => {
+		const handler = source.webhook();
+
+		// Start event
+		const req1 = createMockRequest(JSON.stringify({ session_id: 'sess-x', hook_type: 'start' }));
+		const res1 = createMockResponse();
+		const [startEvent] = await handler(req1, res1);
+
+		// Stop event for same session
+		const req2 = createMockRequest(
+			JSON.stringify({ session_id: 'sess-x', exit_status: 0, duration_seconds: 10 }),
+		);
+		const res2 = createMockResponse();
+		const [stopEvent] = await handler(req2, res2);
+
+		const startKey = (startEvent.payload.lifecycle as Record<string, unknown>).dedupe_key;
+		const stopKey = (stopEvent.payload.lifecycle as Record<string, unknown>).dedupe_key;
+
+		expect(startKey).toBe('claude-code:sess-x:started');
+		expect(stopKey).toBe('claude-code:sess-x:completed');
+		expect(startKey).not.toBe(stopKey);
+	});
+
+	it('terminal events include session.ended_at and exit_status', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(
+			JSON.stringify({ session_id: 'sess-t', exit_status: 42, duration_seconds: 5 }),
+		);
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		const sess = event.payload.session as Record<string, unknown>;
+		expect(sess.ended_at).toBeDefined();
+		expect(sess.exit_status).toBe(42);
+	});
+
+	it('non-terminal events include session.started_at but not ended_at', async () => {
+		const handler = source.webhook();
+		const req = createMockRequest(JSON.stringify({ session_id: 'sess-s', hook_type: 'start' }));
+		const res = createMockResponse();
+		const [event] = await handler(req, res);
+
+		const sess = event.payload.session as Record<string, unknown>;
+		expect(sess.started_at).toBeDefined();
+		expect(sess.ended_at).toBeUndefined();
+		expect(sess.exit_status).toBeUndefined();
 	});
 });

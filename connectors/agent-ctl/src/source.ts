@@ -2,14 +2,29 @@
  * agent-ctl source connector — polls agent-ctl CLI for session lifecycle events.
  *
  * Shells out to `agent-ctl list --json` on each poll, diffs against the previous
- * state, and emits session.started / session.stopped / session.idle / session.error events.
+ * state, and emits normalized lifecycle events for all coding harness sessions.
+ *
+ * Lifecycle mapping:
+ *   - session.started (running/idle appeared) → started (resource.changed)
+ *   - session.active (running ↔ idle)         → active (resource.changed)
+ *   - session.stopped                         → stopped/unknown (actor.stopped)
+ *   - session.error                           → failed/failure (actor.stopped)
+ *   - disappeared session                     → stopped/unknown (actor.stopped)
  */
 
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
-import type { PollResult, SourceConfig, SourceConnector } from '@orgloop/sdk';
-import { buildEvent } from '@orgloop/sdk';
+import type {
+	HarnessType,
+	LifecycleOutcome,
+	LifecyclePhase,
+	OrgLoopEvent,
+	PollResult,
+	SourceConfig,
+	SourceConnector,
+} from '@orgloop/sdk';
+import { buildDedupeKey, buildEvent, eventTypeForPhase, TERMINAL_PHASES } from '@orgloop/sdk';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +46,7 @@ export interface AgentSession {
 
 /** Shape of NDJSON lines from `agent-ctl events --json` */
 export interface AgentCtlEvent {
-	type: 'session.started' | 'session.stopped' | 'session.idle' | 'session.error';
+	type: 'session.started' | 'session.active' | 'session.stopped' | 'session.error';
 	adapter: string;
 	sessionId: string;
 	session: AgentSession;
@@ -43,6 +58,40 @@ interface AgentCtlSourceConfig {
 	binary_path?: string;
 	/** Timeout in ms for CLI invocations (default: 10000) */
 	timeout?: number;
+}
+
+/** Map adapter name to known harness type. */
+function resolveHarness(adapter: string): HarnessType {
+	const known: Record<string, HarnessType> = {
+		'claude-code': 'claude-code',
+		claude: 'claude-code',
+		codex: 'codex',
+		opencode: 'opencode',
+		pi: 'pi',
+		'pi-rust': 'pi-rust',
+	};
+	return known[adapter.toLowerCase()] ?? 'other';
+}
+
+/** Map agent-ctl event type to lifecycle phase + outcome. */
+function resolveLifecycle(
+	eventType: AgentCtlEvent['type'],
+	reason?: string,
+): {
+	phase: LifecyclePhase;
+	outcome?: LifecycleOutcome;
+	reason?: string;
+} {
+	switch (eventType) {
+		case 'session.started':
+			return { phase: 'started' };
+		case 'session.active':
+			return { phase: 'active', ...(reason ? { reason } : {}) };
+		case 'session.stopped':
+			return { phase: 'stopped', outcome: 'unknown', reason: 'session_stopped' };
+		case 'session.error':
+			return { phase: 'failed', outcome: 'failure', reason: 'session_error' };
+	}
 }
 
 /** Resolve env var references like ${VAR_NAME} */
@@ -125,11 +174,11 @@ export class AgentCtlSource implements SourceConnector {
 	}
 
 	private diffState(current: Map<string, AgentSession>) {
-		const events = [];
+		const events: OrgLoopEvent[] = [];
 
 		// New sessions or status changes
-		for (const [id, session] of current) {
-			const prev = this.previousState.get(id);
+		for (const [_id, session] of current) {
+			const prev = this.previousState.get(_id);
 
 			if (!prev) {
 				// New session appeared
@@ -147,16 +196,26 @@ export class AgentCtlSource implements SourceConnector {
 				} else if (session.status === 'error') {
 					events.push(this.buildSessionEvent('session.error', session));
 				} else if (session.status === 'idle' && prev.status === 'running') {
-					events.push(this.buildSessionEvent('session.idle', session));
+					events.push(
+						this.buildSessionEvent('session.active', session, {
+							action: 'session.idle',
+							reason: 'idle',
+						}),
+					);
 				} else if (session.status === 'running' && prev.status !== 'running') {
-					events.push(this.buildSessionEvent('session.started', session));
+					events.push(
+						this.buildSessionEvent('session.active', session, {
+							action: 'session.active',
+							reason: 'running',
+						}),
+					);
 				}
 			}
 		}
 
 		// Sessions that disappeared — treat as stopped
-		for (const [id, prev] of this.previousState) {
-			if (!current.has(id) && prev.status !== 'stopped') {
+		for (const [_id, prev] of this.previousState) {
+			if (!current.has(_id) && prev.status !== 'stopped') {
 				events.push(this.buildSessionEvent('session.stopped', { ...prev, status: 'stopped' }));
 			}
 		}
@@ -164,18 +223,44 @@ export class AgentCtlSource implements SourceConnector {
 		return events;
 	}
 
-	private buildSessionEvent(eventType: AgentCtlEvent['type'], session: AgentSession) {
+	private buildSessionEvent(
+		eventType: AgentCtlEvent['type'],
+		session: AgentSession,
+		options: { action?: string; reason?: string } = {},
+	) {
+		const harness = resolveHarness(session.adapter);
+		const { phase, outcome, reason } = resolveLifecycle(eventType, options.reason);
+		const terminal = TERMINAL_PHASES.has(phase);
+		const now = new Date().toISOString();
+
 		return buildEvent({
 			source: this.sourceId,
-			type: 'resource.changed',
+			type: eventTypeForPhase(phase),
 			provenance: {
 				platform: 'agent-ctl',
-				platform_event: eventType,
+				platform_event: `session.${phase}`,
 				author: session.adapter,
 				author_type: 'bot',
 			},
 			payload: {
-				action: eventType,
+				// Normalized lifecycle contract
+				lifecycle: {
+					phase,
+					terminal,
+					...(terminal && outcome ? { outcome } : {}),
+					...(reason ? { reason } : {}),
+					dedupe_key: buildDedupeKey(harness, session.id, phase),
+				},
+				session: {
+					id: session.id,
+					adapter: session.adapter,
+					harness,
+					cwd: session.cwd,
+					started_at: session.startedAt,
+					...(terminal ? { ended_at: session.stoppedAt ?? now } : {}),
+				},
+				// Backward-compatible fields
+				action: options.action ?? eventType,
 				session_id: session.id,
 				adapter: session.adapter,
 				status: session.status,

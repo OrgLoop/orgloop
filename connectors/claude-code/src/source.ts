@@ -2,7 +2,13 @@
  * Claude Code source connector — hook-based (webhook receiver).
  *
  * Instead of polling, this connector exposes a webhook handler that receives
- * POST requests from Claude Code's post-exit hook script.
+ * POST requests from Claude Code's post-exit and pre-session hook scripts.
+ *
+ * Emits normalized lifecycle events:
+ *   - started → resource.changed (session launched)
+ *   - completed → actor.stopped (exit_status 0)
+ *   - failed → actor.stopped (exit_status non-zero)
+ *   - stopped → actor.stopped (user/host interruption)
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -10,13 +16,15 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import type {
+	LifecycleOutcome,
+	LifecyclePhase,
 	OrgLoopEvent,
 	PollResult,
 	SourceConfig,
 	SourceConnector,
 	WebhookHandler,
 } from '@orgloop/sdk';
-import { buildEvent } from '@orgloop/sdk';
+import { buildDedupeKey, buildEvent, eventTypeForPhase, TERMINAL_PHASES } from '@orgloop/sdk';
 
 /** Resolve env var references like ${WEBHOOK_SECRET} */
 function resolveEnvVar(value: string): string {
@@ -36,16 +44,57 @@ interface ClaudeCodeSessionPayload {
 	working_directory?: string;
 	/** Alias for working_directory (sent by Claude Code's stop hook) */
 	cwd?: string;
-	duration_seconds: number;
-	exit_status: number;
+	duration_seconds?: number;
+	exit_status?: number;
 	summary?: string;
 	transcript_path?: string;
 	timestamp?: string;
+	/**
+	 * Hook type: 'start' for session launch, 'stop' for session exit.
+	 * Defaults to 'stop' for backward compatibility.
+	 */
+	hook_type?: 'start' | 'stop';
 }
 
 interface ClaudeCodeSourceConfig {
 	secret?: string;
 	buffer_dir?: string;
+}
+
+/**
+ * Map exit_status and hook context to lifecycle phase + outcome.
+ */
+function resolveLifecycle(payload: ClaudeCodeSessionPayload): {
+	phase: LifecyclePhase;
+	outcome?: LifecycleOutcome;
+	reason?: string;
+} {
+	const hookType = payload.hook_type ?? 'stop';
+
+	if (hookType === 'start') {
+		return { phase: 'started' };
+	}
+
+	// Terminal: determine outcome from exit_status
+	const exitStatus = payload.exit_status ?? 0;
+
+	if (exitStatus === 0) {
+		return { phase: 'completed', outcome: 'success', reason: 'exit_code_0' };
+	}
+
+	// Signals: 128 + signal number (e.g., 130 = SIGINT, 137 = SIGKILL, 143 = SIGTERM)
+	if (exitStatus > 128) {
+		const signal = exitStatus - 128;
+		const signalNames: Record<number, string> = {
+			2: 'sigint',
+			9: 'sigkill',
+			15: 'sigterm',
+		};
+		const signalName = signalNames[signal] ?? `signal_${signal}`;
+		return { phase: 'stopped', outcome: 'cancelled', reason: signalName };
+	}
+
+	return { phase: 'failed', outcome: 'failure', reason: `exit_code_${exitStatus}` };
 }
 
 export class ClaudeCodeSource implements SourceConnector {
@@ -127,23 +176,51 @@ export class ClaudeCodeSource implements SourceConnector {
 				const payload = JSON.parse(body) as ClaudeCodeSessionPayload;
 				// Accept cwd as alias for working_directory (Claude Code stop hook sends cwd)
 				const workingDirectory = payload.working_directory ?? payload.cwd ?? '';
+				const sessionId = payload.session_id;
+				const now = new Date().toISOString();
+
+				// Resolve lifecycle phase + outcome
+				const { phase, outcome, reason } = resolveLifecycle(payload);
+				const terminal = TERMINAL_PHASES.has(phase);
 
 				const event = buildEvent({
 					source: this.sourceId,
-					type: 'actor.stopped',
+					type: eventTypeForPhase(phase),
 					provenance: {
 						platform: 'claude-code',
-						platform_event: 'session.exited',
+						platform_event: `session.${phase}`,
 						author: 'claude-code',
 						author_type: 'bot',
-						session_id: payload.session_id,
+						session_id: sessionId,
 						working_directory: workingDirectory,
 					},
 					payload: {
-						session_id: payload.session_id,
+						// Normalized lifecycle contract
+						lifecycle: {
+							phase,
+							terminal,
+							...(terminal && outcome ? { outcome } : {}),
+							...(reason ? { reason } : {}),
+							dedupe_key: buildDedupeKey('claude-code', sessionId, phase),
+						},
+						session: {
+							id: sessionId,
+							adapter: 'claude-code',
+							harness: 'claude-code' as const,
+							cwd: workingDirectory || undefined,
+							started_at: terminal ? undefined : now,
+							...(terminal
+								? {
+										ended_at: now,
+										exit_status: payload.exit_status ?? 0,
+									}
+								: {}),
+						},
+						// Backward-compatible fields
+						session_id: sessionId,
 						working_directory: workingDirectory,
-						duration_seconds: payload.duration_seconds,
-						exit_status: payload.exit_status,
+						duration_seconds: payload.duration_seconds ?? 0,
+						exit_status: payload.exit_status ?? 0,
 						summary: payload.summary ?? '',
 						transcript_path: payload.transcript_path ?? '',
 					},

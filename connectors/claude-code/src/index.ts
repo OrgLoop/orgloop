@@ -25,6 +25,13 @@ export default function register(): ConnectorRegistration {
 					platform: 'claude-code',
 					command: 'orgloop hook claude-code-stop',
 				},
+				{
+					id: 'claude-code-start-hook',
+					description:
+						'Install a Start hook in Claude Code settings so session launches notify OrgLoop (optional)',
+					platform: 'claude-code',
+					command: 'orgloop hook claude-code-start',
+				},
 			],
 		},
 	};
