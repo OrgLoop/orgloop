@@ -19,8 +19,7 @@ import type { OrgLoopEvent, OrgLoopEventType } from './types.js';
  * Lifecycle phase of a coding harness session.
  *
  * - `started`   — session launched, harness process running
- * - `active`    — session actively processing (tool calls, edits, etc.)
- * - `active`    — session alive and processing (may include running/idle transitions)
+ * - `active`    — session alive and processing (tool calls, edits, running/idle transitions)
  * - `completed` — session ended normally (work finished)
  * - `failed`    — session ended with error (crash, non-zero exit, timeout)
  * - `stopped`   — session ended by external action (user cancel, host signal)
