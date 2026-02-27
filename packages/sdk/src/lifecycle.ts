@@ -35,10 +35,7 @@ export const TERMINAL_PHASES: ReadonlySet<LifecyclePhase> = new Set([
 ]);
 
 /** Non-terminal phases — the session is still alive. */
-export const NON_TERMINAL_PHASES: ReadonlySet<LifecyclePhase> = new Set([
-	'started',
-	'active',
-]);
+export const NON_TERMINAL_PHASES: ReadonlySet<LifecyclePhase> = new Set(['started', 'active']);
 
 // ─── Lifecycle Outcome ────────────────────────────────────────────────────────
 
