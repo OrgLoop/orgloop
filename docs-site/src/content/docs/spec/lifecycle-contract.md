@@ -179,13 +179,39 @@ routes:
       actor: escalation-agent
 ```
 
+## Exit Status Mapping (Codex)
+
+Codex uses the same exit-status-based lifecycle resolution as Claude Code:
+
+| Exit Status | Phase | Outcome | Reason |
+|-------------|-------|---------|--------|
+| 0 | `completed` | `success` | `exit_code_0` |
+| 1-127 | `failed` | `failure` | `exit_code_<N>` |
+| 130 (SIGINT) | `stopped` | `cancelled` | `sigint` |
+| 137 (SIGKILL) | `stopped` | `cancelled` | `sigkill` |
+| 143 (SIGTERM) | `stopped` | `cancelled` | `sigterm` |
+| 128+N (other) | `stopped` | `cancelled` | `signal_<N>` |
+
+## Exit Status Mapping (OpenCode)
+
+OpenCode uses the same exit-status-based lifecycle resolution as Claude Code:
+
+| Exit Status | Phase | Outcome | Reason |
+|-------------|-------|---------|--------|
+| 0 | `completed` | `success` | `exit_code_0` |
+| 1-127 | `failed` | `failure` | `exit_code_<N>` |
+| 130 (SIGINT) | `stopped` | `cancelled` | `sigint` |
+| 137 (SIGKILL) | `stopped` | `cancelled` | `sigkill` |
+| 143 (SIGTERM) | `stopped` | `cancelled` | `sigterm` |
+| 128+N (other) | `stopped` | `cancelled` | `signal_<N>` |
+
 ## Connector Coverage Matrix
 
 | Connector | started | active | completed | failed | stopped | Conformance |
 |-----------|---------|--------|-----------|--------|---------|-------------|
 | claude-code | Yes | — | Yes | Yes | Yes | Tested |
 | agent-ctl | Yes | Yes | — | Yes | Yes | Tested |
-| codex | — | — | — | — | — | Planned (#69) |
-| opencode | — | — | — | — | — | Planned (#70) |
+| codex | Yes | — | Yes | Yes | Yes | Tested (#69) |
+| opencode | Yes | — | Yes | Yes | Yes | Tested (#70) |
 | pi | — | — | — | — | — | Planned (#71) |
 | pi-rust | — | — | — | — | — | Planned (#72) |
