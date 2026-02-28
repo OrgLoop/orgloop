@@ -40,6 +40,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  connectors/codex:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   connectors/cron:
     dependencies:
       '@orgloop/sdk':
@@ -74,6 +80,12 @@ importers:
         version: link:../../packages/sdk
 
   connectors/openclaw:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  connectors/opencode:
     dependencies:
       '@orgloop/sdk':
         specifier: workspace:*
@@ -163,6 +175,9 @@ importers:
       '@orgloop/connector-claude-code':
         specifier: workspace:*
         version: link:../../connectors/claude-code
+      '@orgloop/connector-codex':
+        specifier: workspace:*
+        version: link:../../connectors/codex
       '@orgloop/connector-cron':
         specifier: workspace:*
         version: link:../../connectors/cron
@@ -181,6 +196,9 @@ importers:
       '@orgloop/connector-openclaw':
         specifier: workspace:*
         version: link:../../connectors/openclaw
+      '@orgloop/connector-opencode':
+        specifier: workspace:*
+        version: link:../../connectors/opencode
       '@orgloop/connector-webhook':
         specifier: workspace:*
         version: link:../../connectors/webhook

@@ -171,7 +171,9 @@ Every plugin type (connector, transform, logger) must be wired through the **ful
 | Engine wiring (sources, actors, transforms, loggers) | `packages/core/src/__tests__/engine-integration.test.ts` | 7 |
 | Config loading + env var substitution | `packages/cli/src/__tests__/config-loading.test.ts` | 7 |
 | Connector resolution | `packages/cli/src/__tests__/resolve-connectors.test.ts` | 7 |
-| Connector config field compatibility | `packages/cli/src/__tests__/connector-config-compat.test.ts` | 20 |
+| Connector config field compatibility | `packages/cli/src/__tests__/connector-config-compat.test.ts` | 30 |
+| Codex lifecycle conformance | `connectors/codex/src/__tests__/source.test.ts` | 26 |
+| OpenCode lifecycle conformance | `connectors/opencode/src/__tests__/source.test.ts` | 26 |
 | Router matching | `packages/core/src/__tests__/router.test.ts` | — |
 | Event bus | `packages/core/src/__tests__/bus.test.ts` | — |
 | Checkpoint store | `packages/core/src/__tests__/store.test.ts` | — |

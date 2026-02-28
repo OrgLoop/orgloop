@@ -196,6 +196,92 @@ describe('Claude Code connector config compatibility', () => {
 	});
 });
 
+// ─── Codex source ─────────────────────────────────────────────────────────────
+
+describe('Codex connector config compatibility', () => {
+	it('init() accepts empty config (webhook-based, no config needed)', async () => {
+		const mod = await import('@orgloop/connector-codex');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'codex',
+				connector: '@orgloop/connector-codex',
+				config: {},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with secret', async () => {
+		const mod = await import('@orgloop/connector-codex');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'codex',
+				connector: '@orgloop/connector-codex',
+				config: { secret: 'test-secret' },
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('register() returns a valid source class', async () => {
+		const mod = await import('@orgloop/connector-codex');
+		const registration = mod.default();
+		expect(registration.id).toBe('codex');
+		expect(registration.source).toBeDefined();
+	});
+});
+
+// ─── OpenCode source ──────────────────────────────────────────────────────────
+
+describe('OpenCode connector config compatibility', () => {
+	it('init() accepts empty config (webhook-based, no config needed)', async () => {
+		const mod = await import('@orgloop/connector-opencode');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'opencode',
+				connector: '@orgloop/connector-opencode',
+				config: {},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with secret', async () => {
+		const mod = await import('@orgloop/connector-opencode');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'opencode',
+				connector: '@orgloop/connector-opencode',
+				config: { secret: 'test-secret' },
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('register() returns a valid source class', async () => {
+		const mod = await import('@orgloop/connector-opencode');
+		const registration = mod.default();
+		expect(registration.id).toBe('opencode');
+		expect(registration.source).toBeDefined();
+	});
+});
+
 // ─── OpenClaw target ─────────────────────────────────────────────────────────
 
 describe('OpenClaw connector config compatibility', () => {
