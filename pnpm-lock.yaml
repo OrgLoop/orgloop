@@ -91,6 +91,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  connectors/pi:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  connectors/pi-rust:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   connectors/webhook:
     dependencies:
       '@orgloop/sdk':
@@ -199,6 +211,12 @@ importers:
       '@orgloop/connector-opencode':
         specifier: workspace:*
         version: link:../../connectors/opencode
+      '@orgloop/connector-pi':
+        specifier: workspace:*
+        version: link:../../connectors/pi
+      '@orgloop/connector-pi-rust':
+        specifier: workspace:*
+        version: link:../../connectors/pi-rust
       '@orgloop/connector-webhook':
         specifier: workspace:*
         version: link:../../connectors/webhook

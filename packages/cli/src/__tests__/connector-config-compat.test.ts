@@ -282,6 +282,92 @@ describe('OpenCode connector config compatibility', () => {
 	});
 });
 
+// ─── Pi source ────────────────────────────────────────────────────────────────
+
+describe('Pi connector config compatibility', () => {
+	it('init() accepts empty config (webhook-based, no config needed)', async () => {
+		const mod = await import('@orgloop/connector-pi');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'pi',
+				connector: '@orgloop/connector-pi',
+				config: {},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with secret', async () => {
+		const mod = await import('@orgloop/connector-pi');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'pi',
+				connector: '@orgloop/connector-pi',
+				config: { secret: 'test-secret' },
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('register() returns a valid source class', async () => {
+		const mod = await import('@orgloop/connector-pi');
+		const registration = mod.default();
+		expect(registration.id).toBe('pi');
+		expect(registration.source).toBeDefined();
+	});
+});
+
+// ─── Pi-rust source ───────────────────────────────────────────────────────────
+
+describe('Pi-rust connector config compatibility', () => {
+	it('init() accepts empty config (webhook-based, no config needed)', async () => {
+		const mod = await import('@orgloop/connector-pi-rust');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'pi-rust',
+				connector: '@orgloop/connector-pi-rust',
+				config: {},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with secret', async () => {
+		const mod = await import('@orgloop/connector-pi-rust');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'pi-rust',
+				connector: '@orgloop/connector-pi-rust',
+				config: { secret: 'test-secret' },
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('register() returns a valid source class', async () => {
+		const mod = await import('@orgloop/connector-pi-rust');
+		const registration = mod.default();
+		expect(registration.id).toBe('pi-rust');
+		expect(registration.source).toBeDefined();
+	});
+});
+
 // ─── OpenClaw target ─────────────────────────────────────────────────────────
 
 describe('OpenClaw connector config compatibility', () => {

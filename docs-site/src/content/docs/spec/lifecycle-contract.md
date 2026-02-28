@@ -205,6 +205,32 @@ OpenCode uses the same exit-status-based lifecycle resolution as Claude Code:
 | 143 (SIGTERM) | `stopped` | `cancelled` | `sigterm` |
 | 128+N (other) | `stopped` | `cancelled` | `signal_<N>` |
 
+## Exit Status Mapping (Pi)
+
+Pi uses the same exit-status-based lifecycle resolution as Claude Code:
+
+| Exit Status | Phase | Outcome | Reason |
+|-------------|-------|---------|--------|
+| 0 | `completed` | `success` | `exit_code_0` |
+| 1-127 | `failed` | `failure` | `exit_code_<N>` |
+| 130 (SIGINT) | `stopped` | `cancelled` | `sigint` |
+| 137 (SIGKILL) | `stopped` | `cancelled` | `sigkill` |
+| 143 (SIGTERM) | `stopped` | `cancelled` | `sigterm` |
+| 128+N (other) | `stopped` | `cancelled` | `signal_<N>` |
+
+## Exit Status Mapping (Pi-rust)
+
+Pi-rust uses the same exit-status-based lifecycle resolution as Claude Code:
+
+| Exit Status | Phase | Outcome | Reason |
+|-------------|-------|---------|--------|
+| 0 | `completed` | `success` | `exit_code_0` |
+| 1-127 | `failed` | `failure` | `exit_code_<N>` |
+| 130 (SIGINT) | `stopped` | `cancelled` | `sigint` |
+| 137 (SIGKILL) | `stopped` | `cancelled` | `sigkill` |
+| 143 (SIGTERM) | `stopped` | `cancelled` | `sigterm` |
+| 128+N (other) | `stopped` | `cancelled` | `signal_<N>` |
+
 ## Connector Coverage Matrix
 
 | Connector | started | active | completed | failed | stopped | Conformance |
@@ -213,5 +239,5 @@ OpenCode uses the same exit-status-based lifecycle resolution as Claude Code:
 | agent-ctl | Yes | Yes | — | Yes | Yes | Tested |
 | codex | Yes | — | Yes | Yes | Yes | Tested (#69) |
 | opencode | Yes | — | Yes | Yes | Yes | Tested (#70) |
-| pi | — | — | — | — | — | Planned (#71) |
-| pi-rust | — | — | — | — | — | Planned (#72) |
+| pi | Yes | — | Yes | Yes | Yes | Tested (#71) |
+| pi-rust | Yes | — | Yes | Yes | Yes | Tested (#72) |
