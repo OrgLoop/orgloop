@@ -71,6 +71,7 @@ export default defineConfig({
 						{ label: 'Tech Stack', slug: 'spec/tech-stack' },
 						{ label: 'Scale Design', slug: 'spec/scale-design' },
 						{ label: 'Validation Plan', slug: 'spec/validation-plan' },
+						{ label: 'Lifecycle Contract', slug: 'spec/lifecycle-contract' },
 						{ label: 'Plugin System', slug: 'spec/plugin-system' },
 						{ label: 'CLI Design', slug: 'spec/cli-design' },
 						{ label: 'Runtime Modes', slug: 'spec/runtime-modes' },

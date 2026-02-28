@@ -1,6 +1,6 @@
 # @orgloop/connector-claude-code
 
-Captures Claude Code session exit events via a webhook handler. Instead of polling an external API, this connector exposes an HTTP endpoint that receives POST requests from a Claude Code post-exit hook script.
+Captures Claude Code session lifecycle events via a webhook handler. Instead of polling an external API, this connector exposes an HTTP endpoint that receives POST requests from Claude Code hook scripts (start + stop).
 
 ## Install
 
@@ -30,13 +30,18 @@ sources:
 
 ## Events emitted
 
-Events are emitted as OrgLoop `actor.stopped` type.
+Events follow the normalized lifecycle contract in `event.payload.lifecycle` and `event.payload.session`.
+
+Non-terminal phases emit `resource.changed`. Terminal phases emit `actor.stopped`.
 
 ### Event kind
 
 | Platform event | Trigger | Description |
 |---|---|---|
-| `session.exited` | Claude Code session ends | A Claude Code session has exited, delivered via webhook |
+| `session.started` | Claude Code session starts | Session launched (start hook) |
+| `session.completed` | Claude Code session ends with exit 0 | Session completed successfully |
+| `session.failed` | Claude Code session ends with non-zero exit | Session failed |
+| `session.stopped` | Claude Code session ends via signal | Session stopped/cancelled |
 
 ### Example event payload
 
@@ -48,13 +53,29 @@ Events are emitted as OrgLoop `actor.stopped` type.
   "type": "actor.stopped",
   "provenance": {
     "platform": "claude-code",
-    "platform_event": "session.exited",
+    "platform_event": "session.completed",
     "author": "claude-code",
     "author_type": "bot",
     "session_id": "sess-abc123",
     "working_directory": "/home/user/my-project"
   },
   "payload": {
+    "lifecycle": {
+      "phase": "completed",
+      "terminal": true,
+      "outcome": "success",
+      "reason": "exit_code_0",
+      "dedupe_key": "claude-code:sess-abc123:completed"
+    },
+    "session": {
+      "id": "sess-abc123",
+      "adapter": "claude-code",
+      "harness": "claude-code",
+      "cwd": "/home/user/my-project",
+      "started_at": "2025-01-15T10:28:00.000Z",
+      "ended_at": "2025-01-15T10:30:00.000Z",
+      "exit_status": 0
+    },
     "session_id": "sess-abc123",
     "working_directory": "/home/user/my-project",
     "duration_seconds": 120,
@@ -66,7 +87,7 @@ Events are emitted as OrgLoop `actor.stopped` type.
 
 ### Webhook request format
 
-POST a JSON body to the connector's webhook endpoint:
+POST a JSON body to the connector's webhook endpoint. The same format is used for start and stop hooks.
 
 ```json
 {
@@ -81,10 +102,12 @@ POST a JSON body to the connector's webhook endpoint:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `session_id` | `string` | yes | Claude Code session identifier |
-| `working_directory` | `string` | yes | Working directory of the session |
-| `duration_seconds` | `number` | yes | Session duration in seconds |
-| `exit_status` | `number` | yes | Process exit code (0 = success) |
+| `working_directory` | `string` | no | Working directory of the session |
+| `cwd` | `string` | no | Alias for `working_directory` |
+| `duration_seconds` | `number` | no | Session duration in seconds |
+| `exit_status` | `number` | no | Process exit code (0 = success) |
 | `summary` | `string` | no | Optional session summary text |
+| `hook_type` | `string` | no | `start` or `stop` (defaults to `stop`) |
 | `timestamp` | `string` | no | Optional ISO 8601 timestamp |
 
 ## Example route
@@ -108,11 +131,13 @@ routes:
 
 - **No API tokens needed** -- this connector receives events via HTTP webhook.
 - A Claude Code **Stop hook** must be configured to POST session data to the OrgLoop webhook endpoint when a session exits.
-- The connector registration includes setup metadata for the hook. You can install it with:
+- An optional **Start hook** can emit `session.started` events on session launch.
+- The connector registration includes setup metadata for both hooks. You can install them with:
   ```bash
   orgloop hook claude-code-stop
+  orgloop hook claude-code-start
   ```
-  This registers a post-exit hook in Claude Code's settings that sends session data to OrgLoop.
+  This registers hooks in Claude Code's settings that send session data to OrgLoop.
 
 ## Environment Variables
 

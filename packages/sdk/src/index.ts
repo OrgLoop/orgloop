@@ -31,13 +31,34 @@ export {
 // HTTP connection management
 export type { HttpAgent, HttpAgentOptions } from './http.js';
 export { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from './http.js';
+// Lifecycle contract
+export type {
+	HarnessType,
+	LifecycleOutcome,
+	LifecyclePayload,
+	LifecyclePhase,
+	LifecycleState,
+	LifecycleValidationError,
+	SessionInfo,
+} from './lifecycle.js';
+export {
+	buildDedupeKey,
+	eventTypeForPhase,
+	NON_TERMINAL_PHASES,
+	TERMINAL_PHASES,
+	validateLifecycleEvent,
+	validateLifecyclePayload,
+} from './lifecycle.js';
 // Logger interface
 export type {
 	Logger,
 	LoggerRegistration,
 } from './logger.js';
 // Test harness
+export type { CreateLifecycleEventOptions } from './testing.js';
 export {
+	assertLifecycleConformance,
+	createLifecycleEvent,
 	createTestContext,
 	createTestEvent,
 	MockActor,

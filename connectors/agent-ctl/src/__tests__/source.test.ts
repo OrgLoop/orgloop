@@ -1,3 +1,4 @@
+import { assertLifecycleConformance } from '@orgloop/sdk';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentSession, ExecFn } from '../source.js';
 import { AgentCtlSource } from '../source.js';
@@ -80,6 +81,7 @@ describe('AgentCtlSource', () => {
 		const result = await source.poll(null);
 
 		expect(result.events).toHaveLength(1);
+		expect(result.events[0].type).toBe('actor.stopped');
 		expect(result.events[0].provenance.platform_event).toBe('session.stopped');
 		expect(result.events[0].payload.stopped_at).toBe('2025-01-15T10:30:00Z');
 	});
@@ -95,10 +97,11 @@ describe('AgentCtlSource', () => {
 		const result = await source.poll(null);
 
 		expect(result.events).toHaveLength(1);
+		expect(result.events[0].type).toBe('actor.stopped');
 		expect(result.events[0].provenance.platform_event).toBe('session.stopped');
 	});
 
-	it('emits session.idle when a running session goes idle', async () => {
+	it('emits session.active when a running session goes idle', async () => {
 		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
 		await source.init({ id: 'my-agents', connector: 'agent-ctl', config: {} });
 		await source.poll(null);
@@ -107,10 +110,12 @@ describe('AgentCtlSource', () => {
 		const result = await source.poll(null);
 
 		expect(result.events).toHaveLength(1);
-		expect(result.events[0].provenance.platform_event).toBe('session.idle');
+		expect(result.events[0].type).toBe('resource.changed');
+		expect(result.events[0].provenance.platform_event).toBe('session.active');
+		expect(result.events[0].payload.action).toBe('session.idle');
 	});
 
-	it('emits session.error when a session enters error state', async () => {
+	it('emits session.failed when a session enters error state', async () => {
 		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
 		await source.init({ id: 'my-agents', connector: 'agent-ctl', config: {} });
 		await source.poll(null);
@@ -119,7 +124,9 @@ describe('AgentCtlSource', () => {
 		const result = await source.poll(null);
 
 		expect(result.events).toHaveLength(1);
-		expect(result.events[0].provenance.platform_event).toBe('session.error');
+		expect(result.events[0].type).toBe('actor.stopped');
+		expect(result.events[0].provenance.platform_event).toBe('session.failed');
+		expect(result.events[0].payload.action).toBe('session.error');
 	});
 
 	it('emits no events when state is unchanged', async () => {
@@ -223,5 +230,168 @@ describe('AgentCtlSource', () => {
 
 		expect(result.events).toHaveLength(1);
 		expect(result.events[0].provenance.platform_event).toBe('session.started');
+	});
+});
+
+// ─── Lifecycle Contract Conformance ───────────────────────────────────────────
+
+describe('AgentCtlSource lifecycle contract', () => {
+	let source: AgentCtlSource;
+
+	beforeEach(async () => {
+		source = new AgentCtlSource();
+	});
+
+	it('started event conforms to lifecycle contract', async () => {
+		source.setExecFn(
+			mockExec([makeSession({ id: 'sess_001', adapter: 'claude-code', status: 'running' })]),
+		);
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		const result = await source.poll(null);
+
+		const event = result.events[0];
+		assertLifecycleConformance(event);
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('started');
+		expect(lc.terminal).toBe(false);
+		expect(lc.outcome).toBeUndefined();
+		expect(lc.dedupe_key).toBe('claude-code:sess_001:started');
+	});
+
+	it('active event conforms to lifecycle contract', async () => {
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		await source.poll(null);
+
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'idle' })]));
+		const result = await source.poll(null);
+
+		const event = result.events[0];
+		assertLifecycleConformance(event);
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('active');
+		expect(lc.terminal).toBe(false);
+		expect(lc.reason).toBe('idle');
+	});
+
+	it('stopped event conforms to lifecycle contract', async () => {
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		await source.poll(null);
+
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'stopped' })]));
+		const result = await source.poll(null);
+
+		const event = result.events[0];
+		assertLifecycleConformance(event);
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('stopped');
+		expect(lc.terminal).toBe(true);
+		expect(lc.outcome).toBe('unknown');
+	});
+
+	it('error event conforms to lifecycle contract', async () => {
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		await source.poll(null);
+
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'error' })]));
+		const result = await source.poll(null);
+
+		const event = result.events[0];
+		assertLifecycleConformance(event);
+
+		const lc = event.payload.lifecycle as Record<string, unknown>;
+		expect(lc.phase).toBe('failed');
+		expect(lc.terminal).toBe(true);
+		expect(lc.outcome).toBe('failure');
+	});
+
+	it('resolves known harness types from adapter names', async () => {
+		const adapters = ['claude-code', 'codex', 'opencode', 'pi', 'pi-rust'];
+		for (const adapter of adapters) {
+			const src = new AgentCtlSource();
+			src.setExecFn(mockExec([makeSession({ id: `sess-${adapter}`, adapter, status: 'running' })]));
+			await src.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+			const result = await src.poll(null);
+
+			const sess = result.events[0].payload.session as Record<string, unknown>;
+			expect(sess.harness).toBe(adapter);
+		}
+	});
+
+	it('resolves unknown adapter to harness type "other"', async () => {
+		source.setExecFn(
+			mockExec([makeSession({ id: 'sess_001', adapter: 'cursor', status: 'running' })]),
+		);
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		const result = await source.poll(null);
+
+		const sess = result.events[0].payload.session as Record<string, unknown>;
+		expect(sess.harness).toBe('other');
+	});
+
+	it('terminal events use actor.stopped event type', async () => {
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		await source.poll(null);
+
+		// stopped
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'stopped' })]));
+		const stoppedResult = await source.poll(null);
+		expect(stoppedResult.events[0].type).toBe('actor.stopped');
+
+		// error (reset state)
+		const src2 = new AgentCtlSource();
+		src2.setExecFn(mockExec([makeSession({ id: 'sess_002', status: 'running' })]));
+		await src2.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		await src2.poll(null);
+
+		src2.setExecFn(mockExec([makeSession({ id: 'sess_002', status: 'error' })]));
+		const errorResult = await src2.poll(null);
+		expect(errorResult.events[0].type).toBe('actor.stopped');
+	});
+
+	it('non-terminal events use resource.changed event type', async () => {
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'running' })]));
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+
+		// started
+		const startResult = await source.poll(null);
+		expect(startResult.events[0].type).toBe('resource.changed');
+
+		// active
+		source.setExecFn(mockExec([makeSession({ id: 'sess_001', status: 'idle' })]));
+		const activeResult = await source.poll(null);
+		expect(activeResult.events[0].type).toBe('resource.changed');
+	});
+
+	it('preserves backward-compatible fields alongside lifecycle', async () => {
+		source.setExecFn(
+			mockExec([
+				makeSession({
+					id: 'sess_001',
+					adapter: 'claude-code',
+					status: 'running',
+					cwd: '/tmp/test',
+				}),
+			]),
+		);
+		await source.init({ id: 'agents', connector: 'agent-ctl', config: {} });
+		const result = await source.poll(null);
+
+		const payload = result.events[0].payload;
+		// Lifecycle fields
+		expect(payload.lifecycle).toBeDefined();
+		expect(payload.session).toBeDefined();
+		// Backward-compat fields
+		expect(payload.action).toBe('session.started');
+		expect(payload.session_id).toBe('sess_001');
+		expect(payload.adapter).toBe('claude-code');
+		expect(payload.status).toBe('running');
+		expect(payload.cwd).toBe('/tmp/test');
 	});
 });

@@ -7,6 +7,15 @@
 
 import type { ActorConnector, DeliveryResult, PollResult, SourceConnector } from './connector.js';
 import { type BuildEventOptions, buildEvent } from './event.js';
+import {
+	buildDedupeKey,
+	eventTypeForPhase,
+	type HarnessType,
+	type LifecycleOutcome,
+	type LifecyclePhase,
+	TERMINAL_PHASES,
+	validateLifecycleEvent,
+} from './lifecycle.js';
 import type { Logger } from './logger.js';
 import type { Transform, TransformContext } from './transform.js';
 import type {
@@ -230,4 +239,75 @@ export function createTestContext(overrides?: Partial<TransformContext>): Transf
 		routeName: 'test-route',
 		...overrides,
 	};
+}
+
+// ─── Lifecycle Test Helpers ───────────────────────────────────────────────────
+
+/** Options for creating a lifecycle test event. */
+export interface CreateLifecycleEventOptions {
+	source?: string;
+	phase?: LifecyclePhase;
+	outcome?: LifecycleOutcome;
+	reason?: string;
+	harness?: HarnessType;
+	session_id?: string;
+	adapter?: string;
+	cwd?: string;
+	exit_status?: number;
+}
+
+/**
+ * Create a well-formed lifecycle test event.
+ * Useful for testing route matching, transforms, and delivery with lifecycle events.
+ */
+export function createLifecycleEvent(options?: CreateLifecycleEventOptions): OrgLoopEvent {
+	const phase = options?.phase ?? 'completed';
+	const terminal = TERMINAL_PHASES.has(phase);
+	const harness = options?.harness ?? 'claude-code';
+	const sessionId = options?.session_id ?? 'test-sess-001';
+
+	return buildEvent({
+		source: options?.source ?? 'test-source',
+		type: eventTypeForPhase(phase),
+		provenance: {
+			platform: harness,
+			platform_event: `session.${phase}`,
+			author: harness,
+			author_type: 'bot',
+		},
+		payload: {
+			lifecycle: {
+				phase,
+				terminal,
+				...(terminal ? { outcome: options?.outcome ?? 'success' } : {}),
+				...(options?.reason ? { reason: options.reason } : {}),
+				dedupe_key: buildDedupeKey(harness, sessionId, phase),
+			},
+			session: {
+				id: sessionId,
+				adapter: options?.adapter ?? harness,
+				harness,
+				cwd: options?.cwd ?? '/tmp/test',
+				started_at: '2026-01-01T00:00:00Z',
+				...(terminal
+					? {
+							ended_at: '2026-01-01T00:05:00Z',
+							exit_status: options?.exit_status ?? 0,
+						}
+					: {}),
+			},
+		},
+	});
+}
+
+/**
+ * Assert that an event conforms to the lifecycle contract.
+ * Throws with descriptive errors if validation fails.
+ */
+export function assertLifecycleConformance(event: OrgLoopEvent): void {
+	const errors = validateLifecycleEvent(event);
+	if (errors.length > 0) {
+		const messages = errors.map((e) => `  ${e.field}: ${e.message}`).join('\n');
+		throw new Error(`Lifecycle conformance failed:\n${messages}`);
+	}
 }
