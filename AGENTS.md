@@ -73,9 +73,10 @@ packages/
   server/       — HTTP API server (placeholder)
 
 connectors/
+  coding-agent/ — Hook-based: harness-agnostic webhook receiver for any coding agent
   github/       — Poll-based: PR reviews, comments, CI failures, bot detection
   linear/       — Poll-based: GraphQL, state change detection, comments
-  claude-code/  — Hook-based: webhook receiver for post-exit hooks
+  claude-code/  — Backward-compat alias for coding-agent (delegates to coding-agent)
   openclaw/     — Target: POST delivery to OpenClaw agent webhooks
   webhook/      — Generic: source (HMAC validation) + target (configurable HTTP)
   cron/         — Scheduled: cron expressions + interval syntax
@@ -171,7 +172,9 @@ Every plugin type (connector, transform, logger) must be wired through the **ful
 | Engine wiring (sources, actors, transforms, loggers) | `packages/core/src/__tests__/engine-integration.test.ts` | 7 |
 | Config loading + env var substitution | `packages/cli/src/__tests__/config-loading.test.ts` | 7 |
 | Connector resolution | `packages/cli/src/__tests__/resolve-connectors.test.ts` | 7 |
-| Connector config field compatibility | `packages/cli/src/__tests__/connector-config-compat.test.ts` | 36 |
+| Connector config field compatibility | `packages/cli/src/__tests__/connector-config-compat.test.ts` | 40 |
+| Coding agent (harness-agnostic) lifecycle | `connectors/coding-agent/src/__tests__/source.test.ts` | 30 |
+| Claude Code backward compat | `connectors/claude-code/src/__tests__/source.test.ts` | 4 |
 | Codex lifecycle conformance | `connectors/codex/src/__tests__/source.test.ts` | 26 |
 | OpenCode lifecycle conformance | `connectors/opencode/src/__tests__/source.test.ts` | 26 |
 | Pi lifecycle conformance | `connectors/pi/src/__tests__/source.test.ts` | 26 |

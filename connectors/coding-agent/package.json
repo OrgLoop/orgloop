@@ -1,7 +1,7 @@
 {
-  "name": "@orgloop/connector-claude-code",
-  "version": "0.1.9",
-  "description": "OrgLoop Claude Code connector — hook-based exit notifications",
+  "name": "@orgloop/connector-coding-agent",
+  "version": "0.1.0",
+  "description": "OrgLoop coding agent connector — harness-agnostic hook-based session lifecycle events",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,7 +12,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@orgloop/connector-coding-agent": "workspace:*",
     "@orgloop/sdk": "workspace:*"
   },
   "orgloop": {
@@ -20,7 +19,7 @@
     "provides": [
       "source"
     ],
-    "id": "claude-code"
+    "id": "coding-agent"
   },
   "files": [
     "dist"

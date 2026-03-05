@@ -36,11 +36,20 @@ importers:
 
   connectors/claude-code:
     dependencies:
+      '@orgloop/connector-coding-agent':
+        specifier: workspace:*
+        version: link:../coding-agent
       '@orgloop/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
 
   connectors/codex:
+    dependencies:
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  connectors/coding-agent:
     dependencies:
       '@orgloop/sdk':
         specifier: workspace:*
@@ -190,6 +199,9 @@ importers:
       '@orgloop/connector-codex':
         specifier: workspace:*
         version: link:../../connectors/codex
+      '@orgloop/connector-coding-agent':
+        specifier: workspace:*
+        version: link:../../connectors/coding-agent
       '@orgloop/connector-cron':
         specifier: workspace:*
         version: link:../../connectors/cron

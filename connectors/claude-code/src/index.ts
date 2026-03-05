@@ -1,14 +1,19 @@
 /**
- * @orgloop/connector-claude-code — Claude Code hook-based source connector registration.
+ * @orgloop/connector-claude-code — Backward-compatible alias.
+ *
+ * This package now delegates to @orgloop/connector-coding-agent.
+ * The connector ID remains 'claude-code' for existing configs.
  */
 
+import { CodingAgentSource } from '@orgloop/connector-coding-agent';
 import type { ConnectorRegistration } from '@orgloop/sdk';
-import { ClaudeCodeSource } from './source.js';
+
+export { CodingAgentSource as ClaudeCodeSource } from '@orgloop/connector-coding-agent';
 
 export default function register(): ConnectorRegistration {
 	return {
 		id: 'claude-code',
-		source: ClaudeCodeSource,
+		source: CodingAgentSource,
 		setup: {
 			env_vars: [
 				{

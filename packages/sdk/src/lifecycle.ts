@@ -51,9 +51,19 @@ export type LifecycleOutcome = 'success' | 'failure' | 'cancelled' | 'unknown';
 // ─── Harness Type ─────────────────────────────────────────────────────────────
 
 /**
- * Known coding harness identifiers. Extensible via `other`.
+ * Known coding harness identifiers.
+ *
+ * Well-known values are listed for documentation; any non-empty string is
+ * accepted at runtime (the coding-agent connector allows arbitrary platform strings).
  */
-export type HarnessType = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'pi-rust' | 'other';
+export type HarnessType =
+	| 'claude-code'
+	| 'codex'
+	| 'opencode'
+	| 'pi'
+	| 'pi-rust'
+	| 'other'
+	| (string & {});
 
 // ─── Lifecycle Payload ────────────────────────────────────────────────────────
 
@@ -209,18 +219,10 @@ export function validateLifecyclePayload(
 		errors.push({ field: 'session.adapter', message: 'must be a non-empty string' });
 	}
 
-	const validHarnesses: HarnessType[] = [
-		'claude-code',
-		'codex',
-		'opencode',
-		'pi',
-		'pi-rust',
-		'other',
-	];
-	if (typeof sess.harness !== 'string' || !validHarnesses.includes(sess.harness as HarnessType)) {
+	if (typeof sess.harness !== 'string' || sess.harness.length === 0) {
 		errors.push({
 			field: 'session.harness',
-			message: `must be one of: ${validHarnesses.join(', ')}`,
+			message: 'must be a non-empty string',
 		});
 	}
 

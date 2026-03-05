@@ -196,6 +196,71 @@ describe('Claude Code connector config compatibility', () => {
 	});
 });
 
+// ─── Coding Agent source ──────────────────────────────────────────────────────
+
+describe('Coding Agent connector config compatibility', () => {
+	it('init() accepts empty config (platform defaults to source id)', async () => {
+		const mod = await import('@orgloop/connector-coding-agent');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'my-agent',
+				connector: '@orgloop/connector-coding-agent',
+				config: {},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with platform and harness', async () => {
+		const mod = await import('@orgloop/connector-coding-agent');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'opencode-src',
+				connector: '@orgloop/connector-coding-agent',
+				config: {
+					platform: 'opencode',
+					harness: 'opencode',
+				},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('init() accepts config with secret', async () => {
+		const mod = await import('@orgloop/connector-coding-agent');
+		const reg = mod.default();
+		expect(reg.source).toBeDefined();
+		const Source = reg.source as NonNullable<typeof reg.source>;
+		const source = new Source();
+
+		await expect(
+			source.init({
+				id: 'coding-agent',
+				connector: '@orgloop/connector-coding-agent',
+				config: {
+					platform: 'claude-code',
+					secret: '${WEBHOOK_SECRET}',
+				},
+			}),
+		).resolves.not.toThrow();
+	});
+
+	it('register() returns a valid source class', async () => {
+		const mod = await import('@orgloop/connector-coding-agent');
+		const registration = mod.default();
+		expect(registration.id).toBe('coding-agent');
+		expect(registration.source).toBeDefined();
+	});
+});
+
 // ─── Codex source ─────────────────────────────────────────────────────────────
 
 describe('Codex connector config compatibility', () => {

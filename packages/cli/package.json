@@ -29,6 +29,7 @@
   "devDependencies": {
     "@orgloop/connector-agent-ctl": "workspace:*",
     "@orgloop/connector-claude-code": "workspace:*",
+    "@orgloop/connector-coding-agent": "workspace:*",
     "@orgloop/connector-codex": "workspace:*",
     "@orgloop/connector-cron": "workspace:*",
     "@orgloop/connector-docker": "workspace:*",
