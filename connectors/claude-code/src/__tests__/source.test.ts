@@ -1,14 +1,8 @@
-import { createHmac } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { assertLifecycleConformance } from '@orgloop/sdk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ClaudeCodeSource } from '../source.js';
-
-const TEST_SECRET = 'test-webhook-secret-key';
 
 function createMockRequest(
 	body: string,
@@ -18,7 +12,6 @@ function createMockRequest(
 	const req = new EventEmitter() as unknown as IncomingMessage;
 	req.method = method;
 	req.headers = { ...headers };
-	// Simulate incoming data
 	setTimeout(() => {
 		(req as EventEmitter).emit('data', Buffer.from(body));
 		(req as EventEmitter).emit('end');
@@ -42,10 +35,6 @@ function createMockResponse(): ServerResponse & { statusCode: number; body: stri
 	return res;
 }
 
-function signPayload(body: string, secret: string): string {
-	return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
-}
-
 const samplePayload = {
 	session_id: 'sess-123',
 	working_directory: '/tmp/test',
@@ -54,30 +43,14 @@ const samplePayload = {
 	summary: 'Task completed',
 };
 
-describe('ClaudeCodeSource', () => {
-	it('initializes without error', async () => {
+describe('ClaudeCodeSource backward compatibility', () => {
+	it('ClaudeCodeSource is re-exported from CodingAgentSource', async () => {
 		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { hook_type: 'post-exit' },
-		});
-		expect(source.id).toBe('claude-code');
+		expect(source).toBeDefined();
+		expect(source.id).toBe('coding-agent');
 	});
 
-	it('returns empty events on initial poll', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(0);
-		expect(result.checkpoint).toBeDefined();
-	});
-
-	it('receives webhook events and returns them on poll', async () => {
+	it('initializes and produces events with claude-code as source id', async () => {
 		const source = new ClaudeCodeSource();
 		await source.init({
 			id: 'claude-code',
@@ -94,20 +67,12 @@ describe('ClaudeCodeSource', () => {
 		expect(events).toHaveLength(1);
 		expect(events[0].type).toBe('actor.stopped');
 		expect(events[0].source).toBe('claude-code');
+		// Platform defaults to source id
 		expect(events[0].provenance.platform).toBe('claude-code');
 		expect(events[0].payload.session_id).toBe('sess-123');
-
-		// Now poll should drain the events
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(1);
-		expect(result.events[0].id).toBe(events[0].id);
-
-		// Second poll should be empty
-		const result2 = await source.poll(result.checkpoint);
-		expect(result2.events).toHaveLength(0);
 	});
 
-	it('rejects non-POST requests', async () => {
+	it('lifecycle contract still holds via backward-compat alias', async () => {
 		const source = new ClaudeCodeSource();
 		await source.init({
 			id: 'claude-code',
@@ -115,523 +80,6 @@ describe('ClaudeCodeSource', () => {
 			config: {},
 		});
 
-		const handler = source.webhook();
-		const req = createMockRequest('', 'GET');
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(405);
-		expect(events).toHaveLength(0);
-	});
-
-	it('rejects invalid JSON', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const req = createMockRequest('not-json');
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(400);
-		expect(events).toHaveLength(0);
-	});
-
-	it('cleans up on shutdown', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		// Add an event via webhook
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({
-				session_id: 'sess-456',
-				working_directory: '/tmp',
-				duration_seconds: 60,
-				exit_status: 0,
-			}),
-		);
-		const res = createMockResponse();
-		await handler(req, res);
-
-		await source.shutdown();
-
-		// After shutdown, pending events should be cleared
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(0);
-	});
-});
-
-describe('ClaudeCodeSource HMAC validation', () => {
-	it('accepts webhook with valid HMAC signature via x-hub-signature-256', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-		const signature = signPayload(body, TEST_SECRET);
-
-		const req = createMockRequest(body, 'POST', { 'x-hub-signature-256': signature });
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events).toHaveLength(1);
-		expect(events[0].type).toBe('actor.stopped');
-		expect(events[0].payload.session_id).toBe('sess-123');
-	});
-
-	it('accepts webhook with valid HMAC signature via x-signature', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-		const signature = signPayload(body, TEST_SECRET);
-
-		const req = createMockRequest(body, 'POST', { 'x-signature': signature });
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events).toHaveLength(1);
-	});
-
-	it('rejects webhook with invalid HMAC signature', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-		const badSignature = signPayload(body, 'wrong-secret');
-
-		const req = createMockRequest(body, 'POST', { 'x-hub-signature-256': badSignature });
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(401);
-		expect(events).toHaveLength(0);
-		expect(JSON.parse(res.body).error).toBe('Invalid signature');
-	});
-
-	it('rejects webhook with missing signature when secret is configured', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-
-		const req = createMockRequest(body, 'POST');
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(401);
-		expect(events).toHaveLength(0);
-		expect(JSON.parse(res.body).error).toBe('Missing signature');
-	});
-
-	it('accepts all requests when no secret is configured (backward compat)', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-
-		const req = createMockRequest(body, 'POST');
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events).toHaveLength(1);
-	});
-
-	it('resolves secret from env var reference', async () => {
-		const envKey = 'TEST_CLAUDE_CODE_SECRET';
-		process.env[envKey] = TEST_SECRET;
-		try {
-			const source = new ClaudeCodeSource();
-			await source.init({
-				id: 'claude-code',
-				connector: '@orgloop/connector-claude-code',
-				config: { secret: `\${${envKey}}` },
-			});
-
-			const handler = source.webhook();
-			const body = JSON.stringify(samplePayload);
-			const signature = signPayload(body, TEST_SECRET);
-
-			const req = createMockRequest(body, 'POST', { 'x-hub-signature-256': signature });
-			const res = createMockResponse();
-			const events = await handler(req, res);
-
-			expect(res.statusCode).toBe(200);
-			expect(events).toHaveLength(1);
-		} finally {
-			delete process.env[envKey];
-		}
-	});
-
-	it('rejects tampered body even with valid-format signature', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET },
-		});
-
-		const handler = source.webhook();
-		const originalBody = JSON.stringify(samplePayload);
-		const signature = signPayload(originalBody, TEST_SECRET);
-
-		// Tamper with the body after signing
-		const tamperedPayload = { ...samplePayload, exit_status: 1 };
-		const tamperedBody = JSON.stringify(tamperedPayload);
-
-		const req = createMockRequest(tamperedBody, 'POST', {
-			'x-hub-signature-256': signature,
-		});
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(401);
-		expect(events).toHaveLength(0);
-	});
-});
-
-describe('ClaudeCodeSource cwd alias and transcript_path', () => {
-	it('accepts cwd as alias for working_directory', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-cwd-alias',
-			cwd: '/home/user/project',
-			duration_seconds: 60,
-			exit_status: 0,
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events).toHaveLength(1);
-		expect(events[0].payload.working_directory).toBe('/home/user/project');
-		expect(events[0].provenance.working_directory).toBe('/home/user/project');
-	});
-
-	it('prefers working_directory over cwd when both are present', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-both',
-			working_directory: '/explicit/path',
-			cwd: '/cwd/path',
-			duration_seconds: 30,
-			exit_status: 0,
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(events[0].payload.working_directory).toBe('/explicit/path');
-	});
-
-	it('includes transcript_path in event payload', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-transcript',
-			working_directory: '/tmp/work',
-			duration_seconds: 90,
-			exit_status: 0,
-			transcript_path: '/tmp/transcripts/sess-transcript.json',
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events[0].payload.transcript_path).toBe('/tmp/transcripts/sess-transcript.json');
-	});
-
-	it('defaults transcript_path to empty string when not provided', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-no-transcript',
-			working_directory: '/tmp',
-			duration_seconds: 10,
-			exit_status: 0,
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(events[0].payload.transcript_path).toBe('');
-	});
-
-	it('defaults working_directory to empty string when neither field present', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-
-		const handler = source.webhook();
-		const payload = {
-			session_id: 'sess-no-dir',
-			duration_seconds: 5,
-			exit_status: 0,
-		};
-
-		const req = createMockRequest(JSON.stringify(payload));
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(events[0].payload.working_directory).toBe('');
-	});
-});
-
-describe('ClaudeCodeSource buffer persistence', () => {
-	let bufferDir: string;
-
-	beforeEach(() => {
-		bufferDir = join(
-			tmpdir(),
-			`orgloop-test-buffer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-		);
-		mkdirSync(bufferDir, { recursive: true });
-	});
-
-	afterEach(() => {
-		if (existsSync(bufferDir)) {
-			rmSync(bufferDir, { recursive: true, force: true });
-		}
-	});
-
-	it('persists events to JSONL file on disk', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: bufferDir },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-		const req = createMockRequest(body);
-		const res = createMockResponse();
-		await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-
-		// Verify the JSONL file exists and has content
-		const bufferPath = join(bufferDir, 'claude-code-test-src.jsonl');
-		expect(existsSync(bufferPath)).toBe(true);
-
-		const content = readFileSync(bufferPath, 'utf-8').trim();
-		const lines = content.split('\n');
-		expect(lines).toHaveLength(1);
-
-		const persisted = JSON.parse(lines[0]);
-		expect(persisted.type).toBe('actor.stopped');
-		expect(persisted.payload.session_id).toBe('sess-123');
-	});
-
-	it('poll drains buffer and clears file', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: bufferDir },
-		});
-
-		const handler = source.webhook();
-
-		// Send two events
-		for (const sid of ['sess-001', 'sess-002']) {
-			const body = JSON.stringify({ ...samplePayload, session_id: sid });
-			const req = createMockRequest(body);
-			const res = createMockResponse();
-			await handler(req, res);
-		}
-
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(2);
-		expect(result.events[0].payload.session_id).toBe('sess-001');
-		expect(result.events[1].payload.session_id).toBe('sess-002');
-
-		// Buffer file should be cleared
-		const bufferPath = join(bufferDir, 'claude-code-test-src.jsonl');
-		const content = readFileSync(bufferPath, 'utf-8');
-		expect(content).toBe('');
-
-		// Second poll should be empty
-		const result2 = await source.poll(result.checkpoint);
-		expect(result2.events).toHaveLength(0);
-	});
-
-	it('survives crash — new instance reads buffered events', async () => {
-		// First instance writes events
-		const source1 = new ClaudeCodeSource();
-		await source1.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: bufferDir },
-		});
-
-		const handler1 = source1.webhook();
-		const body = JSON.stringify(samplePayload);
-		const req = createMockRequest(body);
-		const res = createMockResponse();
-		await handler1(req, res);
-
-		// Simulate crash — don't poll or shutdown, just abandon the instance
-
-		// Second instance picks up buffered events via poll
-		const source2 = new ClaudeCodeSource();
-		await source2.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: bufferDir },
-		});
-
-		const result = await source2.poll(null);
-		expect(result.events).toHaveLength(1);
-		expect(result.events[0].type).toBe('actor.stopped');
-		expect(result.events[0].payload.session_id).toBe('sess-123');
-	});
-
-	it('creates buffer directory if it does not exist', async () => {
-		const nestedDir = join(bufferDir, 'nested', 'deep');
-		expect(existsSync(nestedDir)).toBe(false);
-
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: nestedDir },
-		});
-
-		expect(existsSync(nestedDir)).toBe(true);
-	});
-
-	it('works with HMAC and buffer persistence together', async () => {
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { secret: TEST_SECRET, buffer_dir: bufferDir },
-		});
-
-		const handler = source.webhook();
-		const body = JSON.stringify(samplePayload);
-		const signature = signPayload(body, TEST_SECRET);
-
-		const req = createMockRequest(body, 'POST', { 'x-hub-signature-256': signature });
-		const res = createMockResponse();
-		const events = await handler(req, res);
-
-		expect(res.statusCode).toBe(200);
-		expect(events).toHaveLength(1);
-
-		// Verify persisted to disk
-		const bufferPath = join(bufferDir, 'claude-code-test-src.jsonl');
-		expect(existsSync(bufferPath)).toBe(true);
-
-		// Poll reads from disk
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(1);
-		expect(result.events[0].payload.session_id).toBe('sess-123');
-	});
-
-	it('handles empty buffer file gracefully', async () => {
-		const bufferPath = join(bufferDir, 'claude-code-test-src.jsonl');
-		writeFileSync(bufferPath, '');
-
-		const source = new ClaudeCodeSource();
-		await source.init({
-			id: 'test-src',
-			connector: '@orgloop/connector-claude-code',
-			config: { buffer_dir: bufferDir },
-		});
-
-		const result = await source.poll(null);
-		expect(result.events).toHaveLength(0);
-	});
-});
-
-// ─── Lifecycle Contract Conformance ───────────────────────────────────────────
-
-describe('ClaudeCodeSource lifecycle contract', () => {
-	let source: ClaudeCodeSource;
-
-	beforeEach(async () => {
-		source = new ClaudeCodeSource();
-		await source.init({
-			id: 'claude-code',
-			connector: '@orgloop/connector-claude-code',
-			config: {},
-		});
-	});
-
-	it('stop hook (exit 0) emits completed/success lifecycle event', async () => {
 		const handler = source.webhook();
 		const req = createMockRequest(
 			JSON.stringify({ session_id: 'sess-ok', exit_status: 0, duration_seconds: 60 }),
@@ -641,91 +89,29 @@ describe('ClaudeCodeSource lifecycle contract', () => {
 
 		assertLifecycleConformance(event);
 		expect(event.type).toBe('actor.stopped');
-		expect(event.provenance.platform_event).toBe('session.completed');
 
 		const lc = event.payload.lifecycle as Record<string, unknown>;
 		expect(lc.phase).toBe('completed');
 		expect(lc.terminal).toBe(true);
 		expect(lc.outcome).toBe('success');
-		expect(lc.reason).toBe('exit_code_0');
 		expect(lc.dedupe_key).toBe('claude-code:sess-ok:completed');
+
+		const sess = event.payload.session as Record<string, unknown>;
+		expect(sess.adapter).toBe('claude-code');
+		expect(sess.harness).toBe('claude-code');
 	});
 
-	it('stop hook (exit 1) emits failed/failure lifecycle event', async () => {
+	it('start hook lifecycle works through alias', async () => {
+		const source = new ClaudeCodeSource();
+		await source.init({
+			id: 'claude-code',
+			connector: '@orgloop/connector-claude-code',
+			config: {},
+		});
+
 		const handler = source.webhook();
 		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-fail', exit_status: 1, duration_seconds: 10 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		assertLifecycleConformance(event);
-		expect(event.type).toBe('actor.stopped');
-		expect(event.provenance.platform_event).toBe('session.failed');
-
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('failed');
-		expect(lc.terminal).toBe(true);
-		expect(lc.outcome).toBe('failure');
-		expect(lc.reason).toBe('exit_code_1');
-	});
-
-	it('stop hook (SIGINT/130) emits stopped/cancelled lifecycle event', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-int', exit_status: 130, duration_seconds: 5 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		assertLifecycleConformance(event);
-		expect(event.type).toBe('actor.stopped');
-
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('stopped');
-		expect(lc.terminal).toBe(true);
-		expect(lc.outcome).toBe('cancelled');
-		expect(lc.reason).toBe('sigint');
-	});
-
-	it('stop hook (SIGTERM/143) emits stopped/cancelled lifecycle event', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-term', exit_status: 143, duration_seconds: 5 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		assertLifecycleConformance(event);
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('stopped');
-		expect(lc.outcome).toBe('cancelled');
-		expect(lc.reason).toBe('sigterm');
-	});
-
-	it('stop hook (SIGKILL/137) emits stopped/cancelled lifecycle event', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-kill', exit_status: 137, duration_seconds: 5 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		assertLifecycleConformance(event);
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('stopped');
-		expect(lc.outcome).toBe('cancelled');
-		expect(lc.reason).toBe('sigkill');
-	});
-
-	it('start hook emits started lifecycle event (resource.changed)', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({
-				session_id: 'sess-new',
-				cwd: '/home/user/project',
-				hook_type: 'start',
-			}),
+			JSON.stringify({ session_id: 'sess-new', cwd: '/home/user/project', hook_type: 'start' }),
 		);
 		const res = createMockResponse();
 		const [event] = await handler(req, res);
@@ -733,111 +119,5 @@ describe('ClaudeCodeSource lifecycle contract', () => {
 		assertLifecycleConformance(event);
 		expect(event.type).toBe('resource.changed');
 		expect(event.provenance.platform_event).toBe('session.started');
-
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('started');
-		expect(lc.terminal).toBe(false);
-		expect(lc.outcome).toBeUndefined();
-		expect(lc.dedupe_key).toBe('claude-code:sess-new:started');
-
-		const sess = event.payload.session as Record<string, unknown>;
-		expect(sess.id).toBe('sess-new');
-		expect(sess.adapter).toBe('claude-code');
-		expect(sess.harness).toBe('claude-code');
-		expect(sess.cwd).toBe('/home/user/project');
-		expect(sess.started_at).toBeDefined();
-		expect(sess.ended_at).toBeUndefined();
-	});
-
-	it('defaults hook_type to stop for backward compatibility', async () => {
-		const handler = source.webhook();
-		// No hook_type field — should default to stop behavior
-		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-legacy', exit_status: 0, duration_seconds: 30 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		assertLifecycleConformance(event);
-		expect(event.type).toBe('actor.stopped');
-		const lc = event.payload.lifecycle as Record<string, unknown>;
-		expect(lc.phase).toBe('completed');
-		expect(lc.terminal).toBe(true);
-	});
-
-	it('preserves backward-compatible payload fields alongside lifecycle', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(JSON.stringify(samplePayload));
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		// Lifecycle fields present
-		expect(event.payload.lifecycle).toBeDefined();
-		expect(event.payload.session).toBeDefined();
-
-		// Backward-compatible fields also present
-		expect(event.payload.session_id).toBe('sess-123');
-		expect(event.payload.working_directory).toBe('/tmp/test');
-		expect(event.payload.duration_seconds).toBe(120);
-		expect(event.payload.exit_status).toBe(0);
-		expect(event.payload.summary).toBe('Task completed');
-	});
-
-	it('session.harness is always claude-code', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(JSON.stringify(samplePayload));
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		const sess = event.payload.session as Record<string, unknown>;
-		expect(sess.harness).toBe('claude-code');
-	});
-
-	it('dedupe_key is unique per session + phase', async () => {
-		const handler = source.webhook();
-
-		// Start event
-		const req1 = createMockRequest(JSON.stringify({ session_id: 'sess-x', hook_type: 'start' }));
-		const res1 = createMockResponse();
-		const [startEvent] = await handler(req1, res1);
-
-		// Stop event for same session
-		const req2 = createMockRequest(
-			JSON.stringify({ session_id: 'sess-x', exit_status: 0, duration_seconds: 10 }),
-		);
-		const res2 = createMockResponse();
-		const [stopEvent] = await handler(req2, res2);
-
-		const startKey = (startEvent.payload.lifecycle as Record<string, unknown>).dedupe_key;
-		const stopKey = (stopEvent.payload.lifecycle as Record<string, unknown>).dedupe_key;
-
-		expect(startKey).toBe('claude-code:sess-x:started');
-		expect(stopKey).toBe('claude-code:sess-x:completed');
-		expect(startKey).not.toBe(stopKey);
-	});
-
-	it('terminal events include session.ended_at and exit_status', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(
-			JSON.stringify({ session_id: 'sess-t', exit_status: 42, duration_seconds: 5 }),
-		);
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		const sess = event.payload.session as Record<string, unknown>;
-		expect(sess.ended_at).toBeDefined();
-		expect(sess.exit_status).toBe(42);
-	});
-
-	it('non-terminal events include session.started_at but not ended_at', async () => {
-		const handler = source.webhook();
-		const req = createMockRequest(JSON.stringify({ session_id: 'sess-s', hook_type: 'start' }));
-		const res = createMockResponse();
-		const [event] = await handler(req, res);
-
-		const sess = event.payload.session as Record<string, unknown>;
-		expect(sess.started_at).toBeDefined();
-		expect(sess.ended_at).toBeUndefined();
-		expect(sess.exit_status).toBeUndefined();
 	});
 });

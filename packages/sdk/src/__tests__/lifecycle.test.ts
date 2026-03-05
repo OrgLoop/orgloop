@@ -195,15 +195,31 @@ describe('validateLifecyclePayload', () => {
 		expect(errors.some((e) => e.field === 'session.id')).toBe(true);
 	});
 
-	it('rejects invalid harness type', () => {
+	it('rejects empty harness string', () => {
 		const payload = makeLifecyclePayload('started');
-		(payload.session as Record<string, unknown>).harness = 'vscode';
+		(payload.session as Record<string, unknown>).harness = '';
 		const errors = validateLifecyclePayload(payload);
 		expect(errors.some((e) => e.field === 'session.harness')).toBe(true);
 	});
 
-	it('accepts all valid harness types', () => {
-		for (const h of ['claude-code', 'codex', 'opencode', 'pi', 'pi-rust', 'other']) {
+	it('rejects non-string harness', () => {
+		const payload = makeLifecyclePayload('started');
+		(payload.session as Record<string, unknown>).harness = 42;
+		const errors = validateLifecyclePayload(payload);
+		expect(errors.some((e) => e.field === 'session.harness')).toBe(true);
+	});
+
+	it('accepts all known harness types and arbitrary strings', () => {
+		for (const h of [
+			'claude-code',
+			'codex',
+			'opencode',
+			'pi',
+			'pi-rust',
+			'other',
+			'vscode',
+			'custom-harness',
+		]) {
 			const payload = makeLifecyclePayload('started', { harness: h });
 			const errors = validateLifecyclePayload(payload);
 			expect(errors).toHaveLength(0);

@@ -23,6 +23,7 @@ const AVAILABLE_CONNECTORS = [
 	'github',
 	'linear',
 	'openclaw',
+	'coding-agent',
 	'claude-code',
 	'codex',
 	'opencode',
@@ -38,6 +39,7 @@ const CONNECTOR_PACKAGES: Record<string, string> = {
 	github: '@orgloop/connector-github',
 	linear: '@orgloop/connector-linear',
 	openclaw: '@orgloop/connector-openclaw',
+	'coding-agent': '@orgloop/connector-coding-agent',
 	'claude-code': '@orgloop/connector-claude-code',
 	codex: '@orgloop/connector-codex',
 	opencode: '@orgloop/connector-opencode',
@@ -126,6 +128,19 @@ actors:
       base_url: "http://127.0.0.1:18789"
       auth_token_env: "\${OPENCLAW_WEBHOOK_TOKEN}"
       agent_id: "\${OPENCLAW_AGENT_ID}"`,
+
+		'coding-agent': `apiVersion: orgloop/v1alpha1
+kind: ConnectorGroup
+
+sources:
+  - id: coding-agent
+    description: Coding agent session lifecycle events
+    connector: "@orgloop/connector-coding-agent"
+    config:
+      platform: "claude-code"
+      # secret: "\${WEBHOOK_SECRET}"
+    emits:
+      - actor.stopped`,
 
 		'claude-code': `apiVersion: orgloop/v1alpha1
 kind: ConnectorGroup

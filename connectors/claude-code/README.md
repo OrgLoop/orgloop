@@ -1,5 +1,7 @@
 # @orgloop/connector-claude-code
 
+> **Note:** This package is now a backward-compatible alias for [`@orgloop/connector-coding-agent`](../coding-agent/README.md). New projects should use `@orgloop/connector-coding-agent` directly, which supports any coding agent harness via the `platform` config field.
+
 Captures Claude Code session lifecycle events via a webhook handler. Instead of polling an external API, this connector exposes an HTTP endpoint that receives POST requests from Claude Code hook scripts (start + stop).
 
 ## Install
