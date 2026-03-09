@@ -73,11 +73,14 @@ orgloop/
 │   │
 │   ├── sdk/                     # @orgloop/sdk — plugin development kit
 │   │   └── src/
+│   │       ├── index.ts         # Barrel export (re-exports all modules)
 │   │       ├── types.ts         # Core type definitions (OrgLoopEvent, config, etc.)
 │   │       ├── connector.ts     # Connector interfaces (Source, Actor, Registration)
 │   │       ├── transform.ts     # Transform interface + context
 │   │       ├── logger.ts        # Logger interface + registration
 │   │       ├── event.ts         # Event builder + validators
+│   │       ├── http.ts          # HTTP client utilities (keep-alive, fetch wrapper)
+│   │       ├── lifecycle.ts     # Normalized lifecycle contract types + validators
 │   │       └── testing.ts       # Test harness for plugin authors
 │   │
 │   └── server/                  # @orgloop/server — HTTP API server
