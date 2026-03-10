@@ -42,6 +42,8 @@ export function normalizePullRequestReview(
 			pr_author: extractPrAuthor(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
+			pr_state: (pr.state as string) ?? '',
+			pr_merged: !!(pr.merged_at ?? pr.merged),
 			url: (review.html_url as string) ?? '',
 			review_id: review.id as number,
 			review_state: review.state as string,
@@ -80,6 +82,8 @@ export function normalizePullRequestReviewComment(
 			pr_author: extractPrAuthor(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
+			pr_state: (pr.state as string) ?? '',
+			pr_merged: !!(pr.merged_at ?? pr.merged),
 			url: (comment.html_url as string) ?? '',
 		},
 		payload: {
@@ -116,6 +120,8 @@ export function normalizeIssueComment(
 			pr_author: extractPrAuthor(issue),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: issue.number as number,
+			pr_state: (issue.state as string) ?? '',
+			pr_merged: !!(issue.pull_request as Record<string, unknown> | undefined)?.merged_at,
 			url: (comment.html_url as string) ?? '',
 		},
 		payload: {
@@ -151,6 +157,8 @@ export function normalizePullRequestClosed(
 			pr_author: extractPrAuthor(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
+			pr_state: (pr.state as string) ?? '',
+			pr_merged: !!(pr.merged_at ?? pr.merged),
 			url: (pr.html_url as string) ?? '',
 		},
 		payload: {
