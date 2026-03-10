@@ -32,7 +32,7 @@ import type { ModuleConfig } from './module-instance.js';
 import { ModuleInstance } from './module-instance.js';
 import { stripFrontMatter } from './prompt.js';
 import { ModuleRegistry } from './registry.js';
-import { matchRoutes } from './router.js';
+import { interpolateConfig, matchRoutes } from './router.js';
 import { Scheduler } from './scheduler.js';
 import type { CheckpointStore } from './store.js';
 import { InMemoryCheckpointStore } from './store.js';
@@ -580,9 +580,9 @@ class Runtime extends EventEmitter implements RuntimeControl {
 		const startTime = Date.now();
 
 		try {
-			// Build delivery config
+			// Build delivery config (interpolate {{dot.path}} templates from event)
 			const deliveryConfig: RouteDeliveryConfig = {
-				...(route.then.config ?? {}),
+				...interpolateConfig(route.then.config ?? {}, event),
 			};
 
 			// Resolve launch prompt if configured
