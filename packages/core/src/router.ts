@@ -9,7 +9,7 @@ import type { OrgLoopEvent, RouteDefinition } from '@orgloop/sdk';
 
 // ─── Dot-path field access ────────────────────────────────────────────────────
 
-function getNestedValue(obj: unknown, path: string): unknown {
+export function getNestedValue(obj: unknown, path: string): unknown {
 	const parts = path.split('.');
 	let current: unknown = obj;
 	for (const part of parts) {
@@ -67,4 +67,32 @@ export function matchRoutes(event: OrgLoopEvent, routes: RouteDefinition[]): Mat
 		}
 	}
 	return matched;
+}
+
+// ─── Config interpolation ────────────────────────────────────────────────────
+
+const TEMPLATE_RE = /\{\{(.+?)\}\}/g;
+
+/**
+ * Interpolate {{dot.path}} templates in a config object using event data.
+ * Static values (no {{ }}) pass through unchanged. Missing fields resolve to ''.
+ */
+export function interpolateConfig(
+	config: Record<string, unknown>,
+	event: OrgLoopEvent,
+): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(config)) {
+		if (typeof value === 'string' && TEMPLATE_RE.test(value)) {
+			// Reset lastIndex since we use .test() then .replace() on the same regex
+			TEMPLATE_RE.lastIndex = 0;
+			result[key] = value.replace(TEMPLATE_RE, (_, path: string) => {
+				const resolved = getNestedValue(event, path.trim());
+				return resolved != null ? String(resolved) : '';
+			});
+		} else {
+			result[key] = value;
+		}
+	}
+	return result;
 }

@@ -1,7 +1,7 @@
 import type { RouteDefinition } from '@orgloop/sdk';
 import { createTestEvent } from '@orgloop/sdk';
 import { describe, expect, it } from 'vitest';
-import { matchRoutes } from '../router.js';
+import { interpolateConfig, matchRoutes } from '../router.js';
 
 function makeRoute(overrides: Partial<RouteDefinition> & { name: string }): RouteDefinition {
 	return {
@@ -131,5 +131,59 @@ describe('matchRoutes', () => {
 		const event2 = createTestEvent({ source: 'github', type: 'actor.stopped' });
 		expect(matchRoutes(event1, routes)).toHaveLength(1);
 		expect(matchRoutes(event2, routes)).toHaveLength(1);
+	});
+});
+
+describe('interpolateConfig', () => {
+	it('replaces {{dot.path}} templates with event payload values', () => {
+		const event = createTestEvent({
+			payload: { pull_request: { number: 9170 } },
+		});
+		const config = { session_key: 'orgloop:github:pr:{{payload.pull_request.number}}' };
+		const result = interpolateConfig(config, event);
+		expect(result.session_key).toBe('orgloop:github:pr:9170');
+	});
+
+	it('passes static values through unchanged', () => {
+		const event = createTestEvent();
+		const config = { session_key: 'static-key', timeout: 5000 };
+		const result = interpolateConfig(config, event);
+		expect(result.session_key).toBe('static-key');
+		expect(result.timeout).toBe(5000);
+	});
+
+	it('replaces missing fields with empty string', () => {
+		const event = createTestEvent({ payload: {} });
+		const config = { session_key: 'prefix:{{payload.missing.field}}:suffix' };
+		const result = interpolateConfig(config, event);
+		expect(result.session_key).toBe('prefix::suffix');
+	});
+
+	it('handles nested dot paths', () => {
+		const event = createTestEvent({
+			payload: { repo: { owner: { login: 'acme' } } },
+		});
+		const config = { key: '{{payload.repo.owner.login}}' };
+		const result = interpolateConfig(config, event);
+		expect(result.key).toBe('acme');
+	});
+
+	it('handles multiple templates in one string', () => {
+		const event = createTestEvent({
+			source: 'github',
+			payload: { repo: 'orgloop', pr: 42 },
+		});
+		const config = { key: '{{source}}:{{payload.repo}}:{{payload.pr}}' };
+		const result = interpolateConfig(config, event);
+		expect(result.key).toBe('github:orgloop:42');
+	});
+
+	it('preserves non-string values', () => {
+		const event = createTestEvent();
+		const config = { count: 3, enabled: true, tags: ['a', 'b'] };
+		const result = interpolateConfig(config, event);
+		expect(result.count).toBe(3);
+		expect(result.enabled).toBe(true);
+		expect(result.tags).toEqual(['a', 'b']);
 	});
 });
