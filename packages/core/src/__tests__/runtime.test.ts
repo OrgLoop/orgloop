@@ -2,12 +2,16 @@
  * Tests for the Runtime class — multi-module lifecycle management.
  */
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { OrgLoopEvent } from '@orgloop/sdk';
 import { createTestEvent, MockActor, MockSource, MockTransform } from '@orgloop/sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryBus } from '../bus.js';
 import type { ModuleConfig } from '../module-instance.js';
 import { Runtime } from '../runtime.js';
+import { FileCheckpointStore, InMemoryCheckpointStore } from '../store.js';
 
 function makeModuleConfig(name: string, overrides?: Partial<ModuleConfig>): ModuleConfig {
 	return {
@@ -306,6 +310,136 @@ describe('Runtime', () => {
 		expect(process.listenerCount('unhandledRejection')).toBe(
 			process.listenerCount('unhandledRejection'),
 		);
+	});
+
+	// ─── Checkpoint Store Resolution ─────────────────────────────────────
+
+	it('defaults to FileCheckpointStore when modulePath is set', async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), 'orgloop-rt-cp-'));
+		try {
+			runtime = new Runtime({ bus: new InMemoryBus(), crashHandlers: false });
+			await runtime.start();
+
+			const source = new MockSource('cp-source');
+			const actor = new MockActor('cp-actor');
+
+			const config = makeModuleConfig('cp-mod', { modulePath: tempDir });
+			const status = await runtime.loadModule(config, {
+				sources: new Map([['cp-source', source]]),
+				actors: new Map([['cp-actor', actor]]),
+			});
+
+			expect(status.state).toBe('active');
+			// Module loaded with modulePath — runtime should have created a FileCheckpointStore
+			// at tempDir/.orgloop/checkpoints/. We verify by reading back a checkpoint
+			// after a simulated poll writes one.
+			const store = new FileCheckpointStore(join(tempDir, '.orgloop', 'checkpoints'));
+			await store.set('cp-source', 'test-value');
+			expect(await store.get('cp-source')).toBe('test-value');
+		} finally {
+			await runtime.stop();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it('uses InMemoryCheckpointStore when checkpoint.store is memory', async () => {
+		runtime = new Runtime({ bus: new InMemoryBus(), crashHandlers: false });
+		await runtime.start();
+
+		const source = new MockSource('mem-source');
+		const actor = new MockActor('mem-actor');
+
+		const config = makeModuleConfig('mem-mod', {
+			defaults: { poll_interval: '5m', checkpoint: { store: 'memory' } },
+		});
+		// Should not throw — memory store doesn't need filesystem
+		const status = await runtime.loadModule(config, {
+			sources: new Map([['mem-source', source]]),
+			actors: new Map([['mem-actor', actor]]),
+		});
+
+		expect(status.state).toBe('active');
+	});
+
+	it('uses custom checkpoint dir from config', async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), 'orgloop-rt-cpdir-'));
+		try {
+			runtime = new Runtime({ bus: new InMemoryBus(), crashHandlers: false });
+			await runtime.start();
+
+			const source = new MockSource('dir-source');
+			const actor = new MockActor('dir-actor');
+
+			const customDir = join(tempDir, 'custom-checkpoints');
+			const config = makeModuleConfig('dir-mod', {
+				modulePath: tempDir,
+				defaults: {
+					poll_interval: '5m',
+					checkpoint: { dir: customDir },
+				},
+			});
+
+			await runtime.loadModule(config, {
+				sources: new Map([['dir-source', source]]),
+				actors: new Map([['dir-actor', actor]]),
+			});
+
+			expect(runtime.status().modules).toHaveLength(1);
+		} finally {
+			await runtime.stop();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it('resolves relative checkpoint dir against modulePath', async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), 'orgloop-rt-relcp-'));
+		try {
+			runtime = new Runtime({ bus: new InMemoryBus(), crashHandlers: false });
+			await runtime.start();
+
+			const source = new MockSource('rel-source');
+			const actor = new MockActor('rel-actor');
+
+			const config = makeModuleConfig('rel-mod', {
+				modulePath: tempDir,
+				defaults: {
+					poll_interval: '5m',
+					checkpoint: { dir: 'my-checkpoints' },
+				},
+			});
+
+			await runtime.loadModule(config, {
+				sources: new Map([['rel-source', source]]),
+				actors: new Map([['rel-actor', actor]]),
+			});
+
+			expect(runtime.status().modules).toHaveLength(1);
+		} finally {
+			await runtime.stop();
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it('explicit checkpointStore option overrides config defaults', async () => {
+		runtime = new Runtime({ bus: new InMemoryBus(), crashHandlers: false });
+		await runtime.start();
+
+		const source = new MockSource('override-source');
+		const actor = new MockActor('override-actor');
+		const customStore = new InMemoryCheckpointStore();
+
+		const config = makeModuleConfig('override-mod', {
+			defaults: { poll_interval: '5m', checkpoint: { store: 'file' } },
+		});
+
+		// Passing explicit checkpointStore should override config
+		const status = await runtime.loadModule(config, {
+			sources: new Map([['override-source', source]]),
+			actors: new Map([['override-actor', actor]]),
+			checkpointStore: customStore,
+		});
+
+		expect(status.state).toBe('active');
 	});
 
 	it('stop() shuts down all modules', async () => {

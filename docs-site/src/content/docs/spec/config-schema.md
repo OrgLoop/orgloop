@@ -56,6 +56,9 @@ defaults:
   poll_interval: 5m
   event_retention: 7d
   log_level: info
+  checkpoint:
+    store: file          # 'file' (default) or 'memory'
+    dir: .orgloop/checkpoints  # relative to project dir, or absolute path
 
 # Connector definition files (file paths, not package names)
 connectors:

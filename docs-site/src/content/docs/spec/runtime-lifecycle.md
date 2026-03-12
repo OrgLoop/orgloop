@@ -144,7 +144,7 @@ Graceful shutdown sequence:
 │   ├── daemon.stdout.log    # Daemon stdout
 │   └── daemon.stderr.log    # Daemon stderr
 └── data/
-    ├── checkpoints/         # Per-source checkpoint files
+    ├── checkpoints/         # Per-source checkpoint files (default: <modulePath>/.orgloop/checkpoints/)
     ├── wal/                 # Write-ahead log (event durability)
     └── queue/               # Queued events (degraded actors)
 ```

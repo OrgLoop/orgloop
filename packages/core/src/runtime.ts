@@ -41,7 +41,7 @@ import { ModuleRegistry } from './registry.js';
 import { interpolateConfig, matchRoutes } from './router.js';
 import { Scheduler } from './scheduler.js';
 import type { CheckpointStore } from './store.js';
-import { InMemoryCheckpointStore } from './store.js';
+import { FileCheckpointStore, InMemoryCheckpointStore } from './store.js';
 import type { TransformPipelineOptions } from './transform.js';
 import { executeTransformPipeline } from './transform.js';
 
@@ -286,7 +286,7 @@ class Runtime extends EventEmitter implements RuntimeControl {
 	// ─── Module Management ───────────────────────────────────────────────────
 
 	async loadModule(config: ModuleConfig, options?: LoadModuleOptions): Promise<ModuleStatus> {
-		const checkpointStore = options?.checkpointStore ?? new InMemoryCheckpointStore();
+		const checkpointStore = options?.checkpointStore ?? this.resolveCheckpointStore(config);
 
 		const mod = new ModuleInstance(config, {
 			sources: options?.sources ?? new Map(),
@@ -924,6 +924,36 @@ class Runtime extends EventEmitter implements RuntimeControl {
 	}
 
 	// ─── Helpers ────────────────────────────────────────────────────────────
+
+	private resolveCheckpointStore(config: ModuleConfig): CheckpointStore {
+		const cpConfig = config.defaults?.checkpoint;
+		if (cpConfig?.store === 'memory') {
+			return new InMemoryCheckpointStore();
+		}
+		// Explicit file store requested or directory configured
+		if (cpConfig?.store === 'file' || cpConfig?.dir) {
+			if (cpConfig?.dir) {
+				const dir =
+					cpConfig.dir.startsWith('/') || !config.modulePath
+						? cpConfig.dir
+						: join(config.modulePath, cpConfig.dir);
+				return new FileCheckpointStore(dir);
+			}
+			if (config.modulePath) {
+				return new FileCheckpointStore(join(config.modulePath, '.orgloop', 'checkpoints'));
+			}
+			return new FileCheckpointStore();
+		}
+		// No explicit config — use file if we have a directory hint
+		if (config.modulePath) {
+			return new FileCheckpointStore(join(config.modulePath, '.orgloop', 'checkpoints'));
+		}
+		if (this.dataDir) {
+			return new FileCheckpointStore(this.dataDir);
+		}
+		// No directory context at all — fall back to in-memory
+		return new InMemoryCheckpointStore();
+	}
 
 	private countAllSources(): number {
 		let count = 0;

@@ -232,7 +232,9 @@ This is the right default for OrgLoop's use case. Actors may receive duplicate e
 
 **State management:**
 
-Each source connector maintains a **checkpoint** — an opaque string (typically a timestamp or cursor) that tells the connector where to resume polling after a restart. Checkpoints are persisted to `~/.orgloop/data/checkpoints/`.
+Each source connector maintains a **checkpoint** — an opaque string (typically a timestamp or cursor) that tells the connector where to resume polling after a restart.
+
+By default, checkpoints are persisted to `<modulePath>/.orgloop/checkpoints/<sourceId>.json` when running via the CLI (file-based is the default when a module path is available). Writes are atomic (temp file + rename) to prevent corruption on crash.
 
 ```typescript
 // Checkpoint store
@@ -242,6 +244,20 @@ export interface CheckpointStore {
 }
 
 // Implementations:
-// - FileCheckpointStore      → JSON file per source
-// - InMemoryCheckpointStore  → in-memory (for testing)
+// - FileCheckpointStore      → JSON file per source (default for CLI)
+// - InMemoryCheckpointStore  → in-memory (for testing / library use)
 ```
+
+**Configuration:**
+
+```yaml
+defaults:
+  checkpoint:
+    store: file          # 'file' (default) or 'memory'
+    dir: .orgloop/checkpoints  # relative to module dir, or absolute
+```
+
+If no `checkpoint` config is set, the runtime resolves the store automatically:
+- With `modulePath` → `FileCheckpointStore` at `<modulePath>/.orgloop/checkpoints/`
+- With `dataDir` → `FileCheckpointStore` at the specified data directory
+- Neither → `InMemoryCheckpointStore` (library/test fallback)

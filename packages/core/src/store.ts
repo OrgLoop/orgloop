@@ -5,7 +5,8 @@
  * EventStore: append-only JSONL WAL for at-least-once delivery guarantee.
  */
 
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { OrgLoopEvent } from '@orgloop/sdk';
@@ -42,11 +43,11 @@ export class FileCheckpointStore implements CheckpointStore {
 
 	async set(sourceId: string, checkpoint: string): Promise<void> {
 		await mkdir(this.dir, { recursive: true });
-		await writeFile(
-			this.filePath(sourceId),
-			JSON.stringify({ checkpoint, updated_at: new Date().toISOString() }),
-			'utf-8',
-		);
+		const target = this.filePath(sourceId);
+		const tmp = `${target}.${randomBytes(6).toString('hex')}.tmp`;
+		const data = JSON.stringify({ checkpoint, updated_at: new Date().toISOString() });
+		await writeFile(tmp, data, 'utf-8');
+		await rename(tmp, target);
 	}
 }
 

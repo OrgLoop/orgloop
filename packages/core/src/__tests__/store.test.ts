@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestEvent } from '@orgloop/sdk';
@@ -97,6 +97,63 @@ describe('FileCheckpointStore', () => {
 		// Should not throw — mkdir { recursive: true } in set()
 		await deepStore.set('test-source', 'cp-value');
 		expect(await deepStore.get('test-source')).toBe('cp-value');
+	});
+
+	it('writes atomically — no temp files left behind', async () => {
+		await store.set('atomic-test', 'value-1');
+		await store.set('atomic-test', 'value-2');
+
+		// Only the final checkpoint file should exist, no .tmp files
+		const checkpointDir = join(tempDir, 'checkpoints');
+		const files = await readdir(checkpointDir);
+		const tmpFiles = files.filter((f) => f.endsWith('.tmp'));
+		expect(tmpFiles).toHaveLength(0);
+		expect(files).toContain('atomic-test.json');
+	});
+
+	it('writes valid JSON with checkpoint and updated_at', async () => {
+		await store.set('json-test', 'my-checkpoint-value');
+
+		const checkpointDir = join(tempDir, 'checkpoints');
+		const content = await readFile(join(checkpointDir, 'json-test.json'), 'utf-8');
+		const data = JSON.parse(content) as { checkpoint: string; updated_at: string };
+
+		expect(data.checkpoint).toBe('my-checkpoint-value');
+		expect(data.updated_at).toBeDefined();
+		// updated_at should be a valid ISO 8601 timestamp
+		expect(new Date(data.updated_at).toISOString()).toBe(data.updated_at);
+	});
+
+	it('handles concurrent writes to different sources', async () => {
+		// Write to multiple sources concurrently
+		await Promise.all([
+			store.set('source-a', 'cp-a'),
+			store.set('source-b', 'cp-b'),
+			store.set('source-c', 'cp-c'),
+		]);
+
+		expect(await store.get('source-a')).toBe('cp-a');
+		expect(await store.get('source-b')).toBe('cp-b');
+		expect(await store.get('source-c')).toBe('cp-c');
+	});
+
+	it('handles checkpoint values with special characters', async () => {
+		const special = '{"cursor":"abc123","ts":"2024-01-01T00:00:00Z"}';
+		await store.set('special', special);
+		expect(await store.get('special')).toBe(special);
+	});
+
+	it('returns null for corrupted checkpoint file', async () => {
+		// Write a valid checkpoint first
+		await store.set('corrupt', 'valid');
+
+		// Corrupt the file
+		const checkpointDir = join(tempDir, 'checkpoints');
+		const { writeFile } = await import('node:fs/promises');
+		await writeFile(join(checkpointDir, 'corrupt.json'), 'not-json{{{', 'utf-8');
+
+		// Should return null (graceful fallback)
+		expect(await store.get('corrupt')).toBeNull();
 	});
 });
 

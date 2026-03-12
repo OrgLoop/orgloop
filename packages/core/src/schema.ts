@@ -46,6 +46,13 @@ const projectSchema = {
 				poll_interval: { type: 'string' },
 				event_retention: { type: 'string' },
 				log_level: { type: 'string' },
+				checkpoint: {
+					type: 'object',
+					properties: {
+						store: { type: 'string', enum: ['file', 'memory'] },
+						dir: { type: 'string' },
+					},
+				},
 			},
 		},
 		connectors: { type: 'array', items: { type: 'string' } },
