@@ -40,7 +40,13 @@ export interface ModuleConfig {
 	/** Logger definitions */
 	loggers: LoggerDefinition[];
 	/** Defaults */
-	defaults?: { poll_interval?: string };
+	defaults?: {
+		poll_interval?: string;
+		checkpoint?: {
+			store?: 'file' | 'memory';
+			dir?: string;
+		};
+	};
 	/** Filesystem path to the module */
 	modulePath?: string;
 }

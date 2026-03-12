@@ -284,6 +284,10 @@ export interface ProjectConfig {
 		poll_interval?: string;
 		event_retention?: string;
 		log_level?: string;
+		checkpoint?: {
+			store?: 'file' | 'memory';
+			dir?: string;
+		};
 	};
 	connectors?: string[];
 	transforms?: string[];
@@ -312,6 +316,12 @@ export interface OrgLoopConfig {
 		poll_interval?: string;
 		event_retention?: string;
 		log_level?: string;
+		checkpoint?: {
+			/** Store type: 'file' (default) or 'memory' */
+			store?: 'file' | 'memory';
+			/** Directory for checkpoint files (default: .orgloop/checkpoints relative to module) */
+			dir?: string;
+		};
 	};
 	/** Data directory for WAL, checkpoints, etc. */
 	data_dir?: string;

@@ -125,7 +125,7 @@ The `Runtime` owns the shared infrastructure (bus, scheduler, loggers, HTTP serv
 | `Scheduler` | `packages/core/src/scheduler.ts` | Poll intervals, graceful start/stop |
 | `InMemoryBus` / `FileWalBus` | `packages/core/src/bus.ts` | Pluggable event bus (WAL for durability) |
 | `loadConfig()` | `packages/core/src/schema.ts` | YAML loading, AJV validation, env var substitution |
-| `FileCheckpointStore` | `packages/core/src/store.ts` | Source deduplication checkpoints |
+| `FileCheckpointStore` | `packages/core/src/store.ts` | Source deduplication checkpoints (atomic writes, default for CLI) |
 | `LoggerManager` | `packages/core/src/logger.ts` | Fan-out to loggers, non-blocking, error-isolated |
 | `AuditTrail` | `packages/core/src/audit.ts` | SOP execution audit records with content hashes, chain tracking |
 | `OutputValidator` | `packages/core/src/output-validator.ts` | Pre-delivery output validation (injection, echo, scope) |
@@ -188,11 +188,11 @@ Every plugin type (connector, transform, logger) must be wired through the **ful
 | Pi-rust lifecycle conformance | `connectors/pi-rust/src/__tests__/source.test.ts` | 26 |
 | Router matching | `packages/core/src/__tests__/router.test.ts` | — |
 | Event bus | `packages/core/src/__tests__/bus.test.ts` | — |
-| Checkpoint store | `packages/core/src/__tests__/store.test.ts` | — |
+| Checkpoint store (file + memory, atomic writes) | `packages/core/src/__tests__/store.test.ts` | 17 |
 | Transform filter | `transforms/filter/src/__tests__/filter.test.ts` | — |
 | Dedup transform | `transforms/dedup/src/__tests__/dedup.test.ts` | — |
 | Daemon lifecycle (PID, signals, stop, logs, state) | `packages/cli/src/__tests__/daemon-lifecycle.test.ts` | 45 |
-| Runtime lifecycle (multi-module, shared infra) | `packages/core/src/__tests__/runtime.test.ts` | 11 |
+| Runtime lifecycle (multi-module, shared infra, checkpoint resolution) | `packages/core/src/__tests__/runtime.test.ts` | 16 |
 | Module registry (name conflicts, lookup) | `packages/core/src/__tests__/registry.test.ts` | 8 |
 | Module instance (lifecycle states, resource ownership) | `packages/core/src/__tests__/module-instance.test.ts` | 17 |
 | Multi-module runtime (load, unload, reload, events) | `packages/core/src/__tests__/multi-module-runtime.test.ts` | 9 |

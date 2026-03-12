@@ -138,21 +138,11 @@ async function resolveModuleResources(
 		}
 	}
 
-	// Create persistent checkpoint store
-	let checkpointStore: import('@orgloop/core').FileCheckpointStore | undefined;
-	try {
-		const { FileCheckpointStore } = await import('@orgloop/core');
-		checkpointStore = new FileCheckpointStore();
-	} catch {
-		// Fall through — runtime will use InMemoryCheckpointStore
-	}
-
 	return {
 		resolvedSources,
 		resolvedActors,
 		resolvedTransforms,
 		resolvedLoggers,
-		checkpointStore,
 	};
 }
 
@@ -394,7 +384,6 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 				actors: reqResolved.resolvedActors,
 				transforms: reqResolved.resolvedTransforms,
 				loggers: reqResolved.resolvedLoggers,
-				...(reqResolved.checkpointStore ? { checkpointStore: reqResolved.checkpointStore } : {}),
 			});
 
 			// Track in modules.json
@@ -426,7 +415,6 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 			actors: resolved.resolvedActors,
 			transforms: resolved.resolvedTransforms,
 			loggers: resolved.resolvedLoggers,
-			...(resolved.checkpointStore ? { checkpointStore: resolved.checkpointStore } : {}),
 		});
 
 		// Track in modules.json
@@ -478,9 +466,6 @@ async function runForeground(configPath?: string, force?: boolean): Promise<void
 					actors: restoredResolved.resolvedActors,
 					transforms: restoredResolved.resolvedTransforms,
 					loggers: restoredResolved.resolvedLoggers,
-					...(restoredResolved.checkpointStore
-						? { checkpointStore: restoredResolved.checkpointStore }
-						: {}),
 				});
 
 				output.success(`Restored module "${restoredName}" from previous session`);

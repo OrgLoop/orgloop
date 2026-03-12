@@ -464,7 +464,7 @@ When OrgLoop stops (Ctrl+C, `orgloop stop`, process killed):
 - **All polling stops.** Sources stop fetching new events.
 - **No new events are processed.** Events that arrived but weren't yet processed are lost (no durable queue by default).
 - **Actors are not notified.** Running actor sessions continue independently -- they don't know OrgLoop stopped.
-- **State is preserved.** The last config state remains in `~/.orgloop/state.json`. Source checkpoints remain in `~/.orgloop/checkpoints/`. Logs remain in `~/.orgloop/logs/`.
+- **State is preserved.** The last config state remains in `~/.orgloop/state.json`. Source checkpoints are persisted per-project in `<project>/.orgloop/checkpoints/` (configurable via `defaults.checkpoint.dir`). Logs remain in `~/.orgloop/logs/`.
 
 To restart:
 
