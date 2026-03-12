@@ -76,6 +76,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  connectors/github-webhook:
+    dependencies:
+      '@orgloop/connector-github':
+        specifier: workspace:*
+        version: link:../github
+      '@orgloop/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   connectors/gog:
     dependencies:
       '@orgloop/sdk':
@@ -211,6 +220,9 @@ importers:
       '@orgloop/connector-github':
         specifier: workspace:*
         version: link:../../connectors/github
+      '@orgloop/connector-github-webhook':
+        specifier: workspace:*
+        version: link:../../connectors/github-webhook
       '@orgloop/connector-gog':
         specifier: workspace:*
         version: link:../../connectors/gog

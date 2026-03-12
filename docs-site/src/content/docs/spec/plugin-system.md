@@ -40,7 +40,8 @@ Downloads the SEA binary for the detected platform. Yes, `curl | bash` is ironic
 **Bundled connectors (first-party):**
 
 The `@orgloop/cli` package includes a "batteries-included" set of common connectors:
-- `@orgloop/connector-github`
+- `@orgloop/connector-github` (poll-based)
+- `@orgloop/connector-github-webhook` (webhook-based, real-time)
 - `@orgloop/connector-webhook`
 
 Additional first-party connectors are installed separately:

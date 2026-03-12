@@ -74,8 +74,9 @@ packages/
 
 connectors/
   coding-agent/ — Hook-based: harness-agnostic webhook receiver for any coding agent
-  github/       — Poll-based: PR reviews, comments, CI failures, bot detection
-  linear/       — Poll-based: GraphQL, state change detection, comments
+  github/         — Poll-based: PR reviews, comments, CI failures, bot detection
+  github-webhook/ — Webhook-based: real-time GitHub event delivery, reuses github normalizers
+  linear/         — Poll-based: GraphQL, state change detection, comments
   claude-code/  — Backward-compat alias for coding-agent (delegates to coding-agent)
   openclaw/     — Target: POST delivery to OpenClaw agent webhooks
   webhook/      — Generic: source (HMAC validation) + target (configurable HTTP)
@@ -178,6 +179,7 @@ Every plugin type (connector, transform, logger) must be wired through the **ful
 | Config loading + env var substitution | `packages/cli/src/__tests__/config-loading.test.ts` | 7 |
 | Connector resolution | `packages/cli/src/__tests__/resolve-connectors.test.ts` | 7 |
 | Connector config field compatibility | `packages/cli/src/__tests__/connector-config-compat.test.ts` | 40 |
+| GitHub webhook (signature, normalization, filtering) | `connectors/github-webhook/src/__tests__/source.test.ts` | 31 |
 | Coding agent (harness-agnostic) lifecycle | `connectors/coding-agent/src/__tests__/source.test.ts` | 30 |
 | Claude Code backward compat | `connectors/claude-code/src/__tests__/source.test.ts` | 4 |
 | Codex lifecycle conformance | `connectors/codex/src/__tests__/source.test.ts` | 26 |
