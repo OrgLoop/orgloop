@@ -95,6 +95,11 @@ orgloop/
 │   │       ├── normalizer.ts    # GitHub events → OrgLoop event types
 │   │       └── validator.ts     # Credential validation
 │   │
+│   ├── github-webhook/          # @orgloop/connector-github-webhook
+│   │   └── src/
+│   │       ├── index.ts         # Connector registration
+│   │       └── source.ts        # GitHub webhook source (push-based, reuses github normalizers)
+│   │
 │   ├── linear/                  # @orgloop/connector-linear
 │   │   └── src/
 │   │       ├── index.ts

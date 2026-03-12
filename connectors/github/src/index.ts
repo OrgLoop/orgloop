@@ -6,6 +6,17 @@ import type { ConnectorRegistration } from '@orgloop/sdk';
 import { GitHubSource } from './source.js';
 import { GitHubCredentialValidator } from './validator.js';
 
+export {
+	normalizeCheckSuiteCompleted,
+	normalizeIssueComment,
+	normalizePullRequestClosed,
+	normalizePullRequestOpened,
+	normalizePullRequestReadyForReview,
+	normalizePullRequestReview,
+	normalizePullRequestReviewComment,
+	normalizeWorkflowRunFailed,
+} from './normalizer.js';
+
 export default function register(): ConnectorRegistration {
 	return {
 		id: 'github',

@@ -34,6 +34,7 @@
     "@orgloop/connector-cron": "workspace:*",
     "@orgloop/connector-docker": "workspace:*",
     "@orgloop/connector-github": "workspace:*",
+    "@orgloop/connector-github-webhook": "workspace:*",
     "@orgloop/connector-gog": "workspace:*",
     "@orgloop/connector-linear": "workspace:*",
     "@orgloop/connector-opencode": "workspace:*",

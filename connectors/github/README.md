@@ -119,4 +119,4 @@ routes:
 - **Rate limits** -- GitHub API rate limits apply (5,000 requests/hour for authenticated requests). The connector backs off gracefully on 429 responses but high-frequency polling of repos with many open PRs can consume quota quickly.
 - **Per-page limits** -- Review polling fetches up to 30 recently updated PRs and their reviews. Very active repos may miss reviews on older PRs.
 - **Bot detection** -- Authors with `[bot]` suffix or GitHub `type: "Bot"` are classified as `author_type: "bot"`.
-- **No webhook receiver** -- Unlike `connector-webhook`, this connector has no webhook handler; it only polls.
+- **No webhook receiver** -- This connector only polls. For real-time webhook delivery, use `@orgloop/connector-github-webhook`, which produces identical events with zero latency. The two connectors can coexist (webhook for real-time, polling as fallback).

@@ -1,0 +1,32 @@
+{
+  "name": "@orgloop/connector-github-webhook",
+  "version": "0.1.0",
+  "description": "OrgLoop GitHub webhook connector — real-time event delivery via GitHub webhooks",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orgloop/sdk": "workspace:*",
+    "@orgloop/connector-github": "workspace:*"
+  },
+  "orgloop": {
+    "type": "connector",
+    "provides": [
+      "source"
+    ],
+    "id": "github-webhook"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}
