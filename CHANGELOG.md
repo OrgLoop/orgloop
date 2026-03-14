@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-03-13
+
+fix: robust state normalization for Linear webhook payloads
+
+
 ## [0.7.2] - 2026-03-13
 
 feat: add @orgloop/connector-linear-webhook for real-time Linear events
