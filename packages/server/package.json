@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/server",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "OrgLoop HTTP API server",
   "type": "module",
   "main": "dist/index.js",

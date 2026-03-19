@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-03-19
+
+fix: re-export normalizer functions from connector-linear and connector-github entry points
+
+
 ## [0.7.3] - 2026-03-13
 
 fix: robust state normalization for Linear webhook payloads
