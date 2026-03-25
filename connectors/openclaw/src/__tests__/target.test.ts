@@ -275,6 +275,89 @@ describe('OpenClawTarget', () => {
 		expect(result.status).toBe('rejected');
 	});
 
+	// ─── #140 — Lane support ────────────────────────────────────────────────
+
+	it('passes lane from connector config in request body', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent();
+		await laneTarget.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('main');
+	});
+
+	it('passes lane from route config in request body', async () => {
+		const event = createTestEvent();
+		await target.deliver(event, { lane: 'background' });
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('background');
+	});
+
+	it('route config lane overrides connector config lane', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent();
+		await laneTarget.deliver(event, { lane: 'background' });
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('background');
+	});
+
+	it('omits lane from request body when not configured', async () => {
+		const event = createTestEvent();
+		await target.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body).not.toHaveProperty('lane');
+	});
+
+	it('includes lane in callback-first delivery', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: { openclaw_callback_session_key: 'callback:sess-abc' },
+			},
+		});
+
+		await laneTarget.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('callback:sess-abc');
+		expect(body.lane).toBe('main');
+	});
+
 	// ─── #66 — Dynamic threadId ──────────────────────────────────────────────
 
 	it('passes threadId when route config has thread_id', async () => {
