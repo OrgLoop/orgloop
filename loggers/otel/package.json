@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/logger-otel",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "OrgLoop OpenTelemetry logger — OTLP export for production observability",
   "type": "module",
   "main": "dist/index.js",
