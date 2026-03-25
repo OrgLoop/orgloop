@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-03-24
+
+fix(release): bump all workspace packages (connectors, transforms, loggers) in release script
+
+
 ## [0.7.5] - 2026-03-24
 
 feat(connector-openclaw): add lane support for concurrency control (#140)

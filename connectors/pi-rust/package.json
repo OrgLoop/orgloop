@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-pi-rust",
-  "version": "0.1.0",
+  "version": "0.7.6",
   "description": "OrgLoop Pi-rust connector — hook-based session lifecycle notifications",
   "type": "module",
   "main": "dist/index.js",

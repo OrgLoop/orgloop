@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/transform-filter",
-  "version": "0.1.9",
+  "version": "0.7.6",
   "description": "OrgLoop filter transform — jq-based and match/exclude filtering",
   "type": "module",
   "main": "dist/index.js",
