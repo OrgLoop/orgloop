@@ -58,11 +58,13 @@ export interface SourceConnector {
 /** Result of a delivery operation */
 export interface DeliveryResult {
 	/** Delivery status */
-	status: 'delivered' | 'rejected' | 'error';
+	status: 'delivered' | 'rejected' | 'error' | 'skipped';
 	/** If the actor produces a response event, return it */
 	responseEvent?: OrgLoopEvent;
 	/** Error details if status is 'error' */
 	error?: Error;
+	/** Reason for skipping delivery (when status is 'skipped') */
+	reason?: string;
 }
 
 /**

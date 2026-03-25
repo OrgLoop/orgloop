@@ -95,6 +95,15 @@ export class OpenClawTarget implements ActorConnector {
 	}
 
 	async deliver(event: OrgLoopEvent, routeConfig: RouteDeliveryConfig): Promise<DeliveryResult> {
+		// #148 — Callback delivery guard: skip when callback targets a different agent
+		const callbackAgentId = this.resolveCallbackAgentId(event);
+		if (callbackAgentId && this.agentId && callbackAgentId !== this.agentId) {
+			return {
+				status: 'skipped',
+				reason: 'callback targets different agent',
+			};
+		}
+
 		const url = `${this.baseUrl}/hooks/agent`;
 
 		const rawSessionKey =
@@ -112,7 +121,6 @@ export class OpenClawTarget implements ActorConnector {
 
 		// #91 — Callback-first delivery: check event payload for callback metadata
 		const callbackSessionKey = this.resolveCallbackSessionKey(event);
-		const callbackAgentId = this.resolveCallbackAgentId(event);
 
 		if (callbackSessionKey) {
 			const callbackResult = await this.postToAgent(url, {
