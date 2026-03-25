@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/transform-enrich",
-  "version": "0.1.9",
+  "version": "0.7.6",
   "description": "OrgLoop enrich transform — add, copy, and compute fields on events",
   "type": "module",
   "main": "dist/index.js",
