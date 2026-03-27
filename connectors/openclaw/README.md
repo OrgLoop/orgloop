@@ -20,6 +20,7 @@ actors:
       auth_token_env: "${OPENCLAW_TOKEN}"    # optional — bearer token (env var ref)
       default_channel: "engineering"          # optional — default delivery channel
       default_to: "team-lead"                # optional — default recipient
+      lane: "main"                           # optional — OpenClaw lane for concurrency control
 ```
 
 ### Config options
@@ -31,6 +32,7 @@ actors:
 | `auth_token_env` | `string` | no | — | Bearer token for auth. Supports `${ENV_VAR}` syntax |
 | `default_channel` | `string` | no | — | Default channel for message delivery |
 | `default_to` | `string` | no | — | Default recipient for message delivery |
+| `lane` | `string` | no | — | OpenClaw lane for concurrency control. Can be overridden per-route. |
 
 ## Events accepted
 
@@ -48,7 +50,8 @@ The connector builds a message string from the event and sends it as:
   "wakeMode": "now",
   "deliver": true,
   "channel": "engineering",
-  "to": "team-lead"
+  "to": "team-lead",
+  "lane": "main"
 }
 ```
 
@@ -64,6 +67,7 @@ These fields can be set in the route's `then.config`:
 | `deliver` | `boolean` | `false` | Whether to deliver the message to a channel |
 | `channel` | `string` | — | Override the actor's `default_channel` for this route |
 | `to` | `string` | — | Override the actor's `default_to` for this route |
+| `lane` | `string` | — | Override the actor's `lane` for this route. Controls OpenClaw concurrency. |
 | `launch_prompt` | `string` | — | Resolved from route's `with.prompt_file`; appended to the message |
 
 ### Template interpolation

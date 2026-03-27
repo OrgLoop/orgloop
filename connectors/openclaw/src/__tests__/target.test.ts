@@ -275,6 +275,89 @@ describe('OpenClawTarget', () => {
 		expect(result.status).toBe('rejected');
 	});
 
+	// ─── #140 — Lane support ────────────────────────────────────────────────
+
+	it('passes lane from connector config in request body', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent();
+		await laneTarget.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('main');
+	});
+
+	it('passes lane from route config in request body', async () => {
+		const event = createTestEvent();
+		await target.deliver(event, { lane: 'background' });
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('background');
+	});
+
+	it('route config lane overrides connector config lane', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent();
+		await laneTarget.deliver(event, { lane: 'background' });
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.lane).toBe('background');
+	});
+
+	it('omits lane from request body when not configured', async () => {
+		const event = createTestEvent();
+		await target.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body).not.toHaveProperty('lane');
+	});
+
+	it('includes lane in callback-first delivery', async () => {
+		const laneTarget = new OpenClawTarget();
+		await laneTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+				agent_id: 'test-agent',
+				lane: 'main',
+			},
+		});
+
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: { openclaw_callback_session_key: 'callback:sess-abc' },
+			},
+		});
+
+		await laneTarget.deliver(event, {});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.sessionKey).toBe('callback:sess-abc');
+		expect(body.lane).toBe('main');
+	});
+
 	// ─── #66 — Dynamic threadId ──────────────────────────────────────────────
 
 	it('passes threadId when route config has thread_id', async () => {
@@ -349,7 +432,7 @@ describe('OpenClawTarget', () => {
 			payload: {
 				meta: {
 					openclaw_callback_session_key: 'callback:sess-abc',
-					openclaw_callback_agent_id: 'personal',
+					openclaw_callback_agent_id: 'test-agent',
 				},
 			},
 		});
@@ -358,7 +441,7 @@ describe('OpenClawTarget', () => {
 
 		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(body.sessionKey).toBe('callback:sess-abc');
-		expect(body.agentId).toBe('personal');
+		expect(body.agentId).toBe('test-agent');
 	});
 
 	it('uses callback session key from payload.session.meta when present', async () => {
@@ -389,7 +472,7 @@ describe('OpenClawTarget', () => {
 					id: 'sess-xyz',
 					meta: {
 						openclaw_callback_session_key: 'callback:sess-xyz',
-						openclaw_callback_agent_id: 'personal',
+						openclaw_callback_agent_id: 'test-agent',
 					},
 				},
 			},
@@ -399,7 +482,7 @@ describe('OpenClawTarget', () => {
 
 		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(body.sessionKey).toBe('callback:sess-xyz');
-		expect(body.agentId).toBe('personal');
+		expect(body.agentId).toBe('test-agent');
 	});
 
 	it('prefers payload.meta over payload.session.meta for callback key', async () => {
@@ -428,7 +511,7 @@ describe('OpenClawTarget', () => {
 			payload: {
 				meta: {
 					openclaw_callback_session_key: 'callback:top-level',
-					openclaw_callback_agent_id: 'personal',
+					openclaw_callback_agent_id: 'test-agent',
 				},
 				session: {
 					id: 'sess-1',
@@ -444,7 +527,7 @@ describe('OpenClawTarget', () => {
 
 		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(body.sessionKey).toBe('callback:top-level');
-		expect(body.agentId).toBe('personal');
+		expect(body.agentId).toBe('test-agent');
 	});
 
 	it('falls back to normal delivery when callback delivery fails', async () => {
@@ -458,7 +541,7 @@ describe('OpenClawTarget', () => {
 			payload: {
 				meta: {
 					openclaw_callback_session_key: 'callback:fail',
-					openclaw_callback_agent_id: 'personal',
+					openclaw_callback_agent_id: 'test-agent',
 				},
 			},
 		});
@@ -471,7 +554,7 @@ describe('OpenClawTarget', () => {
 		// First call used callback metadata
 		const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(firstBody.sessionKey).toBe('callback:fail');
-		expect(firstBody.agentId).toBe('personal');
+		expect(firstBody.agentId).toBe('test-agent');
 
 		// Second call used normal routing
 		const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body);
@@ -509,6 +592,126 @@ describe('OpenClawTarget', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(body.sessionKey).toBe('normal:key');
+	});
+
+	// ─── #148 — Callback delivery guard ────────────────────────────────────
+
+	it('skips delivery when callback agent_id targets a different agent', async () => {
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: {
+					openclaw_callback_session_key: 'callback:sess-abc',
+					openclaw_callback_agent_id: 'other-agent',
+				},
+			},
+		});
+
+		const result = await target.deliver(event, { session_key: 'normal:key' });
+
+		expect(result.status).toBe('skipped');
+		expect(result.reason).toBe('callback targets different agent');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('delivers when callback agent_id matches configured agent_id', async () => {
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: {
+					openclaw_callback_session_key: 'callback:sess-abc',
+					openclaw_callback_agent_id: 'test-agent',
+				},
+			},
+		});
+
+		const result = await target.deliver(event, { session_key: 'normal:key' });
+
+		expect(result.status).toBe('delivered');
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.agentId).toBe('test-agent');
+	});
+
+	it('delivers when no callback agent_id exists (backwards compatible)', async () => {
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: {
+					openclaw_callback_session_key: 'callback:sess-abc',
+				},
+			},
+		});
+
+		const result = await target.deliver(event, { session_key: 'normal:key' });
+
+		expect(result.status).toBe('delivered');
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it('delivers when no callback metadata exists at all (backwards compatible)', async () => {
+		const event = createTestEvent({
+			source: 'github',
+			type: 'resource.changed',
+			payload: { pr_number: 42 },
+		});
+
+		const result = await target.deliver(event, { session_key: 'normal:key' });
+
+		expect(result.status).toBe('delivered');
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it('skips delivery when callback agent_id from session.meta targets different agent', async () => {
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				session: {
+					id: 'sess-xyz',
+					meta: {
+						openclaw_callback_session_key: 'callback:sess-xyz',
+						openclaw_callback_agent_id: 'other-agent',
+					},
+				},
+			},
+		});
+
+		const result = await target.deliver(event, {});
+
+		expect(result.status).toBe('skipped');
+		expect(result.reason).toBe('callback targets different agent');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('delivers when connector has no agent_id configured (guard inactive)', async () => {
+		const noAgentTarget = new OpenClawTarget();
+		await noAgentTarget.init({
+			id: 'openclaw-agent',
+			connector: '@orgloop/connector-openclaw',
+			config: {
+				base_url: 'http://localhost:18789',
+			},
+		});
+
+		const event = createTestEvent({
+			source: 'coding-agent',
+			type: 'actor.stopped',
+			payload: {
+				meta: {
+					openclaw_callback_session_key: 'callback:sess-abc',
+					openclaw_callback_agent_id: 'some-agent',
+				},
+			},
+		});
+
+		const result = await noAgentTarget.deliver(event, {});
+
+		expect(result.status).toBe('delivered');
+		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
 	it('includes threadId in callback delivery', async () => {

@@ -64,6 +64,7 @@ interface OpenClawConfig {
 	agent_id?: string;
 	default_channel?: string;
 	default_to?: string;
+	lane?: string;
 }
 
 export class OpenClawTarget implements ActorConnector {
@@ -73,6 +74,7 @@ export class OpenClawTarget implements ActorConnector {
 	private agentId?: string;
 	private defaultChannel?: string;
 	private defaultTo?: string;
+	private lane?: string;
 	private httpAgent: HttpAgent | null = null;
 	private fetch: typeof globalThis.fetch = globalThis.fetch;
 
@@ -82,6 +84,7 @@ export class OpenClawTarget implements ActorConnector {
 		this.agentId = cfg.agent_id;
 		this.defaultChannel = cfg.default_channel;
 		this.defaultTo = cfg.default_to;
+		this.lane = cfg.lane;
 
 		if (cfg.auth_token_env) {
 			this.authToken = resolveEnvVar(cfg.auth_token_env);
@@ -92,6 +95,15 @@ export class OpenClawTarget implements ActorConnector {
 	}
 
 	async deliver(event: OrgLoopEvent, routeConfig: RouteDeliveryConfig): Promise<DeliveryResult> {
+		// #148 — Callback delivery guard: skip when callback targets a different agent
+		const callbackAgentId = this.resolveCallbackAgentId(event);
+		if (callbackAgentId && this.agentId && callbackAgentId !== this.agentId) {
+			return {
+				status: 'skipped',
+				reason: 'callback targets different agent',
+			};
+		}
+
 		const url = `${this.baseUrl}/hooks/agent`;
 
 		const rawSessionKey =
@@ -104,9 +116,11 @@ export class OpenClawTarget implements ActorConnector {
 		const rawThreadId = routeConfig.thread_id as string | undefined;
 		const threadId = rawThreadId ? interpolateTemplate(rawThreadId, event) : undefined;
 
+		// #140 — Lane support: route config overrides connector-level default
+		const lane = (routeConfig.lane as string) ?? this.lane;
+
 		// #91 — Callback-first delivery: check event payload for callback metadata
 		const callbackSessionKey = this.resolveCallbackSessionKey(event);
-		const callbackAgentId = this.resolveCallbackAgentId(event);
 
 		if (callbackSessionKey) {
 			const callbackResult = await this.postToAgent(url, {
@@ -117,6 +131,7 @@ export class OpenClawTarget implements ActorConnector {
 				deliver: routeConfig.deliver ?? false,
 				channel: (routeConfig.channel as string) ?? this.defaultChannel,
 				to: (routeConfig.to as string) ?? this.defaultTo,
+				...(lane !== undefined ? { lane } : {}),
 				...(threadId !== undefined ? { threadId } : {}),
 				...(routeConfig.model ? { model: routeConfig.model } : {}),
 				...(routeConfig.thinking ? { thinking: routeConfig.thinking } : {}),
@@ -136,6 +151,7 @@ export class OpenClawTarget implements ActorConnector {
 			deliver: routeConfig.deliver ?? false,
 			channel: (routeConfig.channel as string) ?? this.defaultChannel,
 			to: (routeConfig.to as string) ?? this.defaultTo,
+			...(lane !== undefined ? { lane } : {}),
 			...(threadId !== undefined ? { threadId } : {}),
 			...(routeConfig.model ? { model: routeConfig.model } : {}),
 			...(routeConfig.thinking ? { thinking: routeConfig.thinking } : {}),

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-03-25
+
+feat(connector-openclaw): callback-aware delivery guard — skip route when callback metadata targets a different agent (#148)
+
+
+## [0.7.6] - 2026-03-24
+
+fix(release): bump all workspace packages (connectors, transforms, loggers) in release script
+
+
+## [0.7.5] - 2026-03-24
+
+feat(connector-openclaw): add lane support for concurrency control (#140)
+
+
 ## [0.7.4] - 2026-03-20
 
 fix(connector-linear-webhook): recognize stateId in updatedFrom for state change detection

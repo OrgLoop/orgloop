@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-linear-webhook",
-  "version": "0.1.0",
+  "version": "0.7.7",
   "description": "OrgLoop Linear webhook connector — real-time event delivery via Linear webhooks",
   "type": "module",
   "main": "dist/index.js",

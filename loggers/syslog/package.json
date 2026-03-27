@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/logger-syslog",
-  "version": "0.1.9",
+  "version": "0.7.7",
   "description": "OrgLoop syslog logger — RFC 5424 for enterprise/unix deployments",
   "type": "module",
   "main": "dist/index.js",
