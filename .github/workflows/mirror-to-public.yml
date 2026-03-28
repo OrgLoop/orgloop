@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   mirror:
+    # Only run on the private repo — skip when this file is mirrored to the public repo
+    if: github.repository == 'c-h-personal/orgloop'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
