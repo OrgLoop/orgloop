@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-github-webhook",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "OrgLoop GitHub webhook connector — real-time event delivery via GitHub webhooks",
   "type": "module",
   "main": "dist/index.js",
