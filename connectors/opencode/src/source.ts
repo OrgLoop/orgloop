@@ -12,9 +12,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { join } from 'node:path';
 import type {
 	LifecycleOutcome,
 	LifecyclePhase,
@@ -24,7 +22,14 @@ import type {
 	SourceConnector,
 	WebhookHandler,
 } from '@orgloop/sdk';
-import { buildDedupeKey, buildEvent, eventTypeForPhase, TERMINAL_PHASES } from '@orgloop/sdk';
+import {
+	buildDedupeKey,
+	buildEvent,
+	EventBuffer,
+	eventTypeForPhase,
+	parseBufferSize,
+	TERMINAL_PHASES,
+} from '@orgloop/sdk';
 
 /** Resolve env var references like ${WEBHOOK_SECRET} */
 function resolveEnvVar(value: string): string {
@@ -57,6 +62,7 @@ interface OpenCodeSessionPayload {
 interface OpenCodeSourceConfig {
 	secret?: string;
 	buffer_dir?: string;
+	max_buffer_size?: string;
 }
 
 /**
@@ -98,7 +104,7 @@ export class OpenCodeSource implements SourceConnector {
 	readonly id = 'opencode';
 	private sourceId = 'opencode';
 	private secret?: string;
-	private bufferPath?: string;
+	private buffer?: EventBuffer;
 	private pendingEvents: OrgLoopEvent[] = [];
 
 	async init(config: SourceConfig): Promise<void> {
@@ -111,19 +117,20 @@ export class OpenCodeSource implements SourceConnector {
 
 		if (cfg.buffer_dir) {
 			const dir = resolveEnvVar(cfg.buffer_dir);
-			if (!existsSync(dir)) {
-				mkdirSync(dir, { recursive: true });
-			}
-			this.bufferPath = join(dir, `opencode-${this.sourceId}.jsonl`);
-			this.loadBufferedEvents();
+			this.buffer = new EventBuffer({
+				bufferDir: dir,
+				filePrefix: 'opencode',
+				sourceId: this.sourceId,
+				maxBufferBytes: cfg.max_buffer_size ? parseBufferSize(cfg.max_buffer_size) : undefined,
+			});
+			this.buffer.ensureDir();
 		}
 	}
 
 	async poll(_checkpoint: string | null): Promise<PollResult> {
 		let events: OrgLoopEvent[];
-		if (this.bufferPath) {
-			events = this.loadBufferedEvents();
-			writeFileSync(this.bufferPath, '');
+		if (this.buffer) {
+			events = this.buffer.drainSync();
 		} else {
 			events = [...this.pendingEvents];
 			this.pendingEvents = [];
@@ -235,22 +242,12 @@ export class OpenCodeSource implements SourceConnector {
 	}
 
 	private persistEvent(event: OrgLoopEvent): void {
-		if (this.bufferPath) {
-			appendFileSync(this.bufferPath, `${JSON.stringify(event)}\n`);
+		if (this.buffer) {
+			this.buffer.append(event);
+			this.buffer.enforceSize();
 		} else {
 			this.pendingEvents.push(event);
 		}
-	}
-
-	private loadBufferedEvents(): OrgLoopEvent[] {
-		if (!this.bufferPath || !existsSync(this.bufferPath)) {
-			return [];
-		}
-		const content = readFileSync(this.bufferPath, 'utf-8').trim();
-		if (!content) {
-			return [];
-		}
-		return content.split('\n').map((line) => JSON.parse(line) as OrgLoopEvent);
 	}
 }
 

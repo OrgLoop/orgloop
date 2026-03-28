@@ -15,9 +15,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { join } from 'node:path';
 import type {
 	LifecycleOutcome,
 	LifecyclePhase,
@@ -27,7 +25,14 @@ import type {
 	SourceConnector,
 	WebhookHandler,
 } from '@orgloop/sdk';
-import { buildDedupeKey, buildEvent, eventTypeForPhase, TERMINAL_PHASES } from '@orgloop/sdk';
+import {
+	buildDedupeKey,
+	buildEvent,
+	EventBuffer,
+	eventTypeForPhase,
+	parseBufferSize,
+	TERMINAL_PHASES,
+} from '@orgloop/sdk';
 
 /** Resolve env var references like ${WEBHOOK_SECRET} */
 function resolveEnvVar(value: string): string {
@@ -64,6 +69,8 @@ export interface CodingAgentSessionPayload {
 export interface CodingAgentSourceConfig {
 	secret?: string;
 	buffer_dir?: string;
+	/** Maximum buffer file size (e.g. "50MB", "1GB"). Default: 50MB. */
+	max_buffer_size?: string;
 	/** Platform identifier for provenance. Defaults to the source ID. */
 	platform?: string;
 	/** Harness identifier for session metadata. Defaults to platform value. */
@@ -112,7 +119,7 @@ export class CodingAgentSource implements SourceConnector {
 	private platform = 'coding-agent';
 	private harness = 'coding-agent';
 	private secret?: string;
-	private bufferPath?: string;
+	private buffer?: EventBuffer;
 	private pendingEvents: OrgLoopEvent[] = [];
 
 	async init(config: SourceConfig): Promise<void> {
@@ -129,21 +136,21 @@ export class CodingAgentSource implements SourceConnector {
 
 		if (cfg.buffer_dir) {
 			const dir = resolveEnvVar(cfg.buffer_dir);
-			if (!existsSync(dir)) {
-				mkdirSync(dir, { recursive: true });
-			}
-			this.bufferPath = join(dir, `coding-agent-${this.sourceId}.jsonl`);
-			this.loadBufferedEvents();
+			this.buffer = new EventBuffer({
+				bufferDir: dir,
+				filePrefix: 'coding-agent',
+				sourceId: this.sourceId,
+				maxBufferBytes: cfg.max_buffer_size ? parseBufferSize(cfg.max_buffer_size) : undefined,
+			});
+			this.buffer.ensureDir();
 		}
 	}
 
 	async poll(_checkpoint: string | null): Promise<PollResult> {
 		// Drain any events received via webhook since last poll
 		let events: OrgLoopEvent[];
-		if (this.bufferPath) {
-			events = this.loadBufferedEvents();
-			// Clear the buffer file
-			writeFileSync(this.bufferPath, '');
+		if (this.buffer) {
+			events = this.buffer.drainSync();
 		} else {
 			events = [...this.pendingEvents];
 			this.pendingEvents = [];
@@ -261,22 +268,12 @@ export class CodingAgentSource implements SourceConnector {
 	}
 
 	private persistEvent(event: OrgLoopEvent): void {
-		if (this.bufferPath) {
-			appendFileSync(this.bufferPath, `${JSON.stringify(event)}\n`);
+		if (this.buffer) {
+			this.buffer.append(event);
+			this.buffer.enforceSize();
 		} else {
 			this.pendingEvents.push(event);
 		}
-	}
-
-	private loadBufferedEvents(): OrgLoopEvent[] {
-		if (!this.bufferPath || !existsSync(this.bufferPath)) {
-			return [];
-		}
-		const content = readFileSync(this.bufferPath, 'utf-8').trim();
-		if (!content) {
-			return [];
-		}
-		return content.split('\n').map((line) => JSON.parse(line) as OrgLoopEvent);
 	}
 }
 

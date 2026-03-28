@@ -28,6 +28,9 @@ export {
 	isOrgLoopEvent,
 	validateEvent,
 } from './event.js';
+// Event buffer (streaming, size-capped JSONL buffer for webhook connectors)
+export type { EventBufferConfig } from './event-buffer.js';
+export { EventBuffer, parseBufferSize } from './event-buffer.js';
 // HTTP connection management
 export type { HttpAgent, HttpAgentOptions } from './http.js';
 export { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from './http.js';

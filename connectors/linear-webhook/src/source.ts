@@ -10,9 +10,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { join } from 'node:path';
 import {
 	normalizeAssigneeChange,
 	normalizeComment,
@@ -28,7 +26,7 @@ import type {
 	SourceConnector,
 	WebhookHandler,
 } from '@orgloop/sdk';
-import { buildEvent } from '@orgloop/sdk';
+import { buildEvent, EventBuffer, parseBufferSize } from '@orgloop/sdk';
 
 export interface LinearWebhookConfig {
 	/** HMAC signing secret for validating webhook signatures */
@@ -41,6 +39,8 @@ export interface LinearWebhookConfig {
 	team?: string;
 	/** Directory for persisting buffered events across restarts */
 	buffer_dir?: string;
+	/** Maximum buffer file size (e.g. "50MB", "1GB"). Default: 50MB. */
+	max_buffer_size?: string;
 }
 
 /** Resolve env var references like ${LINEAR_WEBHOOK_SECRET} */
@@ -80,7 +80,7 @@ export class LinearWebhookSource implements SourceConnector {
 	private allowedEvents?: Set<string>;
 	private teamFilter?: string;
 	private pendingEvents: OrgLoopEvent[] = [];
-	private bufferPath?: string;
+	private buffer?: EventBuffer;
 
 	async init(config: SourceConfig): Promise<void> {
 		this.sourceId = config.id;
@@ -100,19 +100,20 @@ export class LinearWebhookSource implements SourceConnector {
 
 		if (cfg.buffer_dir) {
 			const dir = resolveEnvVar(cfg.buffer_dir);
-			if (!existsSync(dir)) {
-				mkdirSync(dir, { recursive: true });
-			}
-			this.bufferPath = join(dir, `linear-webhook-${this.sourceId}.jsonl`);
-			this.loadBufferedEvents();
+			this.buffer = new EventBuffer({
+				bufferDir: dir,
+				filePrefix: 'linear-webhook',
+				sourceId: this.sourceId,
+				maxBufferBytes: cfg.max_buffer_size ? parseBufferSize(cfg.max_buffer_size) : undefined,
+			});
+			this.buffer.ensureDir();
 		}
 	}
 
 	async poll(_checkpoint: string | null): Promise<PollResult> {
 		let events: OrgLoopEvent[];
-		if (this.bufferPath) {
-			events = this.loadBufferedEvents();
-			writeFileSync(this.bufferPath, '');
+		if (this.buffer) {
+			events = this.buffer.drainSync();
 		} else {
 			events = [...this.pendingEvents];
 			this.pendingEvents = [];
@@ -362,22 +363,12 @@ export class LinearWebhookSource implements SourceConnector {
 	}
 
 	private persistEvent(event: OrgLoopEvent): void {
-		if (this.bufferPath) {
-			appendFileSync(this.bufferPath, `${JSON.stringify(event)}\n`);
+		if (this.buffer) {
+			this.buffer.append(event);
+			this.buffer.enforceSize();
 		} else {
 			this.pendingEvents.push(event);
 		}
-	}
-
-	private loadBufferedEvents(): OrgLoopEvent[] {
-		if (!this.bufferPath || !existsSync(this.bufferPath)) {
-			return [];
-		}
-		const content = readFileSync(this.bufferPath, 'utf-8').trim();
-		if (!content) {
-			return [];
-		}
-		return content.split('\n').map((line) => JSON.parse(line) as OrgLoopEvent);
 	}
 }
 
