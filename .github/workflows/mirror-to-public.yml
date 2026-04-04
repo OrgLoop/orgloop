@@ -25,7 +25,7 @@ jobs:
         run: |
           git remote add mirror "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            git push mirror "${{ github.ref_name }}" --force
+            git push mirror "${{ github.ref_name }}"
           else
-            git push mirror main --force
+            git push mirror main
           fi
