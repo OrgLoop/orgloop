@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	normalizeCheckSuiteCompleted,
 	normalizeIssueAssigned,
 	normalizeIssueComment,
 	normalizeIssueLabeled,
@@ -7,6 +8,7 @@ import {
 	normalizePullRequestClosed,
 	normalizePullRequestReview,
 	normalizePullRequestReviewComment,
+	normalizeWorkflowRunFailed,
 } from '../normalizer.js';
 
 const repo = { full_name: 'org/repo' };
@@ -247,5 +249,86 @@ describe('normalizeIssueAssigned', () => {
 	it('uses actor as author (the person who assigned)', () => {
 		const event = normalizeIssueAssigned('gh', assignedEvent, repo);
 		expect(event.provenance.author).toBe('alice');
+	});
+});
+
+// ─── pr_author coverage for workflow_run and check_suite ─────────────────────
+
+describe('normalizeWorkflowRunFailed pr_author', () => {
+	function makeRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			id: 500,
+			name: 'CI',
+			run_number: 12,
+			conclusion: 'failure',
+			head_branch: 'feature-x',
+			head_sha: 'abc123',
+			actor: { login: 'ci-trigger', type: 'User' },
+			html_url: 'https://github.com/org/repo/actions/runs/500',
+			...overrides,
+		};
+	}
+
+	it('extracts pr_author from pull_requests array', () => {
+		const run = makeRun({
+			pull_requests: [{ number: 42, user: { login: 'pr-opener', type: 'User' } }],
+		});
+		const event = normalizeWorkflowRunFailed('gh', run, repo);
+		expect(event.provenance.pr_author).toBe('pr-opener');
+	});
+
+	it('falls back to actor login when no pull_requests', () => {
+		const run = makeRun({ pull_requests: [] });
+		const event = normalizeWorkflowRunFailed('gh', run, repo);
+		expect(event.provenance.pr_author).toBe('ci-trigger');
+	});
+
+	it('falls back to actor login when pull_requests is undefined', () => {
+		const run = makeRun();
+		const event = normalizeWorkflowRunFailed('gh', run, repo);
+		expect(event.provenance.pr_author).toBe('ci-trigger');
+	});
+
+	it('falls back to unknown when no actor', () => {
+		const run = makeRun({ actor: undefined, pull_requests: undefined });
+		const event = normalizeWorkflowRunFailed('gh', run, repo);
+		expect(event.provenance.pr_author).toBe('unknown');
+	});
+});
+
+describe('normalizeCheckSuiteCompleted pr_author', () => {
+	function makeSuite(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			id: 600,
+			conclusion: 'success',
+			status: 'completed',
+			head_branch: 'main',
+			head_sha: 'def456',
+			before: 'aaa',
+			after: 'bbb',
+			app: { slug: 'github-actions', name: 'GitHub Actions' },
+			url: 'https://api.github.com/repos/org/repo/check-suites/600',
+			...overrides,
+		};
+	}
+
+	it('extracts pr_author from pull_requests array', () => {
+		const suite = makeSuite({
+			pull_requests: [{ number: 42, user: { login: 'pr-opener', type: 'User' } }],
+		});
+		const event = normalizeCheckSuiteCompleted('gh', suite, repo);
+		expect(event.provenance.pr_author).toBe('pr-opener');
+	});
+
+	it('omits pr_author when no pull_requests', () => {
+		const suite = makeSuite();
+		const event = normalizeCheckSuiteCompleted('gh', suite, repo);
+		expect(event.provenance.pr_author).toBeUndefined();
+	});
+
+	it('omits pr_author when pull_requests is empty', () => {
+		const suite = makeSuite({ pull_requests: [] });
+		const event = normalizeCheckSuiteCompleted('gh', suite, repo);
+		expect(event.provenance.pr_author).toBeUndefined();
 	});
 });

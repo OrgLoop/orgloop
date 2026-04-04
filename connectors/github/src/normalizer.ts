@@ -19,6 +19,11 @@ function extractPrAuthor(pr: Record<string, unknown>): string {
 	return (prUser?.login as string) ?? 'unknown';
 }
 
+function extractPrLabels(pr: Record<string, unknown>): string[] {
+	const labels = pr.labels as Array<{ name: string }> | undefined;
+	return labels?.map((l) => l.name) ?? [];
+}
+
 /** Normalize a PR review event */
 export function normalizePullRequestReview(
 	sourceId: string,
@@ -40,6 +45,7 @@ export function normalizePullRequestReview(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(pr),
+			labels: extractPrLabels(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
 			pr_state: (pr.state as string) ?? '',
@@ -80,6 +86,7 @@ export function normalizePullRequestReviewComment(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(pr),
+			labels: extractPrLabels(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
 			pr_state: (pr.state as string) ?? '',
@@ -118,6 +125,7 @@ export function normalizeIssueComment(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(issue),
+			labels: extractPrLabels(issue),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: issue.number as number,
 			pr_state: (issue.state as string) ?? '',
@@ -155,6 +163,7 @@ export function normalizePullRequestClosed(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(pr),
+			labels: extractPrLabels(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
 			pr_state: (pr.state as string) ?? '',
@@ -178,6 +187,9 @@ export function normalizeWorkflowRunFailed(
 	repo: Record<string, unknown>,
 ): OrgLoopEvent {
 	const actor = run.actor as Record<string, unknown> | undefined;
+	const prs = run.pull_requests as Array<Record<string, unknown>> | undefined;
+	const pr = prs?.[0];
+	const prAuthor = pr ? extractPrAuthor(pr) : ((actor?.login as string) ?? 'unknown');
 	return buildEvent({
 		source: sourceId,
 		type: 'resource.changed',
@@ -190,6 +202,8 @@ export function normalizeWorkflowRunFailed(
 				(actor?.login as string) ?? '',
 				actor?.type as string | undefined,
 			),
+			pr_author: prAuthor,
+			labels: pr ? extractPrLabels(pr) : [],
 			repo: (repo.full_name as string) ?? '',
 			url: (run.html_url as string) ?? '',
 		},
@@ -224,6 +238,7 @@ export function normalizePullRequestOpened(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(pr),
+			labels: extractPrLabels(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
 			url: (pr.html_url as string) ?? '',
@@ -259,6 +274,7 @@ export function normalizePullRequestReadyForReview(
 				user?.type as string | undefined,
 			),
 			pr_author: extractPrAuthor(pr),
+			labels: extractPrLabels(pr),
 			repo: (repo.full_name as string) ?? '',
 			pr_number: pr.number as number,
 			url: (pr.html_url as string) ?? '',
@@ -382,6 +398,9 @@ export function normalizeCheckSuiteCompleted(
 	repo: Record<string, unknown>,
 ): OrgLoopEvent {
 	const app = suite.app as Record<string, unknown> | undefined;
+	const prs = suite.pull_requests as Array<Record<string, unknown>> | undefined;
+	const pr = prs?.[0];
+	const prAuthor = pr ? extractPrAuthor(pr) : undefined;
 	return buildEvent({
 		source: sourceId,
 		type: 'resource.changed',
@@ -391,6 +410,7 @@ export function normalizeCheckSuiteCompleted(
 			resource_id: `suite-${suite.id}`,
 			author: (app?.slug as string) ?? 'unknown',
 			author_type: 'bot' as const,
+			...(prAuthor ? { pr_author: prAuthor } : {}),
 			repo: (repo.full_name as string) ?? '',
 			url: (suite.url as string) ?? '',
 		},
