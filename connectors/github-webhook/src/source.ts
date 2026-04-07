@@ -190,7 +190,10 @@ export class GitHubWebhookSource implements SourceConnector {
 	 * Normalize a GitHub webhook payload into OrgLoop events.
 	 * Uses the same normalizer functions as the polling connector.
 	 */
-	async normalizeWebhookPayload(githubEvent: string, payload: Record<string, unknown>): Promise<OrgLoopEvent[]> {
+	async normalizeWebhookPayload(
+		githubEvent: string,
+		payload: Record<string, unknown>,
+	): Promise<OrgLoopEvent[]> {
 		const action = payload.action as string | undefined;
 		const repo = (payload.repository as Record<string, unknown>) ?? {};
 

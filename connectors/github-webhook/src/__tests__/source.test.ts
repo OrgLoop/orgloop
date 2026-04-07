@@ -844,24 +844,24 @@ describe('GitHubWebhookSource', () => {
 			});
 		});
 
-		it('returns empty for missing pull_request in PR event', () => {
-			const events = source.normalizeWebhookPayload('pull_request', {
+		it('returns empty for missing pull_request in PR event', async () => {
+			const events = await source.normalizeWebhookPayload('pull_request', {
 				action: 'opened',
 				repository: sampleRepo,
 			});
 			expect(events).toHaveLength(0);
 		});
 
-		it('returns empty for missing review in review event', () => {
-			const events = source.normalizeWebhookPayload('pull_request_review', {
+		it('returns empty for missing review in review event', async () => {
+			const events = await source.normalizeWebhookPayload('pull_request_review', {
 				action: 'submitted',
 				repository: sampleRepo,
 			});
 			expect(events).toHaveLength(0);
 		});
 
-		it('returns empty for missing comment in issue_comment event', () => {
-			const events = source.normalizeWebhookPayload('issue_comment', {
+		it('returns empty for missing comment in issue_comment event', async () => {
+			const events = await source.normalizeWebhookPayload('issue_comment', {
 				action: 'created',
 				repository: sampleRepo,
 			});
