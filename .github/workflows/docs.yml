@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   build:
+    # Only deploy docs from the public mirror (Pages not enabled on private repo)
+    if: github.repository == 'orgloop/orgloop'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
