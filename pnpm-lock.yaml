@@ -317,8 +317,8 @@ importers:
   packages/sdk:
     dependencies:
       undici:
-        specifier: ^8.0.2
-        version: 8.0.2
+        specifier: ^8.0.3
+        version: 8.0.3
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
@@ -1240,8 +1240,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@8.0.2:
-    resolution: {integrity: sha512-B9MeU5wuFhkFAuNeA19K2GDFcQXZxq33fL0nRy2Aq30wdufZbyyvxW3/ChaeipXVfy/wUweZyzovQGk39+9k2w==}
+  undici@8.0.3:
+    resolution: {integrity: sha512-vTLEG/ceXgu/dMTQ8uNE2zgl7I7qEkx9l9tkz2H802AkgbBMvbmHMu4YqsrpGbUAMYKSQhCbmjsWMAeGu1dYXg==}
     engines: {node: '>=22.19.0'}
 
   universal-user-agent@7.0.3:
@@ -2130,7 +2130,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@8.0.2: {}
+  undici@8.0.3: {}
 
   universal-user-agent@7.0.3: {}
 
