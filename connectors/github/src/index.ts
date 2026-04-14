@@ -8,7 +8,10 @@ import { GitHubCredentialValidator } from './validator.js';
 
 export {
 	normalizeCheckSuiteCompleted,
+	normalizeIssueAssigned,
 	normalizeIssueComment,
+	normalizeIssueLabeled,
+	normalizeIssueOpened,
 	normalizePullRequestClosed,
 	normalizePullRequestOpened,
 	normalizePullRequestReadyForReview,

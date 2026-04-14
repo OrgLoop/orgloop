@@ -8,7 +8,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
 	normalizeCheckSuiteCompleted,
+	normalizeIssueAssigned,
 	normalizeIssueComment,
+	normalizeIssueLabeled,
+	normalizeIssueOpened,
 	normalizePullRequestClosed,
 	normalizePullRequestOpened,
 	normalizePullRequestReadyForReview,
@@ -258,6 +261,31 @@ export class GitHubWebhookSource implements SourceConnector {
 					return [normalizeWorkflowRunFailed(this.sourceId, run, repo)];
 				}
 				// Non-failure workflow runs — emit raw event
+				return this.buildRawEvent(githubEvent, action, payload);
+			}
+
+			case 'issues': {
+				const issue = payload.issue as Record<string, unknown>;
+				if (!issue || issue.pull_request) return [];
+				// GitHub webhook sends `sender` as the actor; normalizers expect `actor`
+				const issueEvent = {
+					actor: payload.sender,
+					issue,
+					label: payload.label,
+					assignee: payload.assignee,
+				};
+				if (action === 'opened') {
+					if (!this.isEventAllowed('issues.opened')) return [];
+					return [normalizeIssueOpened(this.sourceId, issueEvent, repo)];
+				}
+				if (action === 'labeled') {
+					if (!this.isEventAllowed('issues.labeled')) return [];
+					return [normalizeIssueLabeled(this.sourceId, issueEvent, repo)];
+				}
+				if (action === 'assigned') {
+					if (!this.isEventAllowed('issues.assigned')) return [];
+					return [normalizeIssueAssigned(this.sourceId, issueEvent, repo)];
+				}
 				return this.buildRawEvent(githubEvent, action, payload);
 			}
 

@@ -93,6 +93,7 @@ const sampleIssue = {
 	title: 'Bug: widgets broken',
 	state: 'open',
 	user: { login: 'eve', type: 'User' },
+	html_url: 'https://github.com/org/repo/issues/10',
 	pull_request: undefined,
 };
 
@@ -482,6 +483,114 @@ describe('GitHubWebhookSource', () => {
 			expect(events[0].provenance.platform_event).toBe('issue_comment');
 			expect(events[0].payload.comment_body).toBe('I agree with the approach');
 			expect(events[0].payload.issue_number).toBe(10);
+		});
+	});
+
+	// ─── Issues events ──────────────────────────────────────────────────────
+
+	describe('issues events', () => {
+		const sampleSender = { login: 'frank', type: 'User' };
+		const sampleLabel = { name: 'bug' };
+		const sampleAssignee = { login: 'grace', type: 'User' };
+
+		beforeEach(async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: {},
+			});
+		});
+
+		it('normalizes issues.opened', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify({
+				action: 'opened',
+				issue: sampleIssue,
+				sender: sampleSender,
+				repository: sampleRepo,
+			});
+			const req = createMockRequest(body, 'POST', { 'x-github-event': 'issues' });
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(res.statusCode).toBe(200);
+			expect(events).toHaveLength(1);
+			expect(events[0].type).toBe('resource.changed');
+			expect(events[0].provenance.platform_event).toBe('issues.opened');
+			expect(events[0].provenance.author).toBe('frank');
+			expect(events[0].payload.action).toBe('opened');
+			expect(events[0].payload.issue_number).toBe(10);
+			expect(events[0].payload.issue_title).toBe('Bug: widgets broken');
+		});
+
+		it('normalizes issues.labeled', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify({
+				action: 'labeled',
+				issue: sampleIssue,
+				label: sampleLabel,
+				sender: sampleSender,
+				repository: sampleRepo,
+			});
+			const req = createMockRequest(body, 'POST', { 'x-github-event': 'issues' });
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('issues.labeled');
+			expect(events[0].payload.action).toBe('labeled');
+			expect(events[0].payload.label).toBe('bug');
+		});
+
+		it('normalizes issues.assigned', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify({
+				action: 'assigned',
+				issue: sampleIssue,
+				assignee: sampleAssignee,
+				sender: sampleSender,
+				repository: sampleRepo,
+			});
+			const req = createMockRequest(body, 'POST', { 'x-github-event': 'issues' });
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('issues.assigned');
+			expect(events[0].payload.action).toBe('assigned');
+			expect(events[0].payload.assignee).toBe('grace');
+		});
+
+		it('skips issues events on pull requests', async () => {
+			const handler = source.webhook();
+			const prIssue = { ...sampleIssue, pull_request: { url: 'https://...' } };
+			const body = JSON.stringify({
+				action: 'opened',
+				issue: prIssue,
+				sender: sampleSender,
+				repository: sampleRepo,
+			});
+			const req = createMockRequest(body, 'POST', { 'x-github-event': 'issues' });
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(0);
+		});
+
+		it('emits raw event for unhandled issues actions', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify({
+				action: 'closed',
+				issue: sampleIssue,
+				sender: sampleSender,
+				repository: sampleRepo,
+			});
+			const req = createMockRequest(body, 'POST', { 'x-github-event': 'issues' });
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('issues.closed');
 		});
 	});
 
