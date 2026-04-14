@@ -92,6 +92,31 @@ const sampleIssueStateChanged = {
 	},
 };
 
+// Real Linear webhook payload shape: updatedFrom only contains stateId (UUID), not state object
+const sampleIssueStateChangedWithStateId = {
+	action: 'update',
+	createdAt: '2024-01-15T11:00:00.000Z',
+	type: 'Issue',
+	url: 'https://linear.app/team/issue/TEAM-42',
+	updatedFrom: {
+		stateId: 'abc-123-uuid',
+	},
+	data: {
+		id: 'issue-uuid-1',
+		identifier: 'TEAM-42',
+		title: 'Fix login bug',
+		url: 'https://linear.app/team/issue/TEAM-42',
+		state: { id: 'def-456-uuid', name: 'In Progress' },
+		assignee: { name: 'Bob', isBot: false },
+		creator: { name: 'Alice', isBot: false },
+		createdAt: '2024-01-15T10:00:00.000Z',
+		updatedAt: '2024-01-15T11:00:00.000Z',
+		priority: 2,
+		labels: [],
+		team: { key: 'TEAM' },
+	},
+};
+
 const sampleIssueAssigneeChanged = {
 	action: 'update',
 	createdAt: '2024-01-15T12:00:00.000Z',
@@ -411,6 +436,33 @@ describe('LinearWebhookSource', () => {
 			expect(events[0].payload.action).toBe('state_changed');
 			expect(events[0].payload.previous_state).toBe('Todo');
 			expect(events[0].payload.new_state).toBe('In Progress');
+		});
+
+		it('normalizes state change when updatedFrom contains only stateId (real Linear webhook shape)', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify(sampleIssueStateChangedWithStateId);
+			const req = createMockRequest(body, 'POST', {});
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('issue.state_changed');
+			expect(events[0].payload.action).toBe('state_changed');
+			expect(events[0].payload.new_state).toBe('In Progress');
+			// previous_state falls back to 'Unknown' since only stateId (UUID) is available
+			expect(events[0].payload.previous_state).toBe('Unknown');
+		});
+
+		it('does not emit issue.update when only stateId changes', async () => {
+			const handler = source.webhook();
+			const body = JSON.stringify(sampleIssueStateChangedWithStateId);
+			const req = createMockRequest(body, 'POST', {});
+			const res = createMockResponse();
+
+			const events = await handler(req, res);
+			expect(events).toHaveLength(1);
+			// Must not fall back to the raw issue.update event
+			expect(events[0].provenance.platform_event).not.toBe('issue.update');
 		});
 
 		it('normalizes issue assignee change', async () => {
