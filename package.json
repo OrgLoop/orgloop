@@ -21,7 +21,8 @@
     "overrides": {
       "vite": ">=7.3.2",
       "picomatch": ">=4.0.4",
-      "rollup": ">=4.59.0"
+      "rollup": ">=4.59.0",
+      "protobufjs": ">=7.5.5"
     }
   },
   "devDependencies": {
