@@ -3,9 +3,20 @@ import { createTestEvent } from '@orgloop/sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenClawTarget } from '../target.js';
 
+const { fetchMock } = vi.hoisted(() => ({
+	fetchMock: vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: 'OK' }),
+}));
+
+vi.mock('@orgloop/sdk', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@orgloop/sdk')>();
+	return {
+		...actual,
+		createFetchWithKeepAlive: () => fetchMock,
+	};
+});
+
 describe('OpenClawTarget', () => {
 	let target: OpenClawTarget;
-	let fetchMock: ReturnType<typeof vi.fn>;
 
 	beforeEach(async () => {
 		target = new OpenClawTarget();
@@ -18,12 +29,8 @@ describe('OpenClawTarget', () => {
 			},
 		});
 
-		fetchMock = vi.fn().mockResolvedValue({
-			ok: true,
-			status: 200,
-			statusText: 'OK',
-		});
-		vi.stubGlobal('fetch', fetchMock);
+		fetchMock.mockClear();
+		fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
 	});
 
 	afterEach(() => {

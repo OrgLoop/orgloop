@@ -6,7 +6,7 @@
  * close it during shutdown() for proper lifecycle management.
  */
 
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, type Dispatcher, fetch as undiciFetch } from 'undici';
 
 /**
  * Opaque handle for an HTTP connection pool agent.
@@ -67,12 +67,19 @@ export function createHttpAgent(options?: HttpAgentOptions): HttpAgent {
  * ```
  */
 export function createFetchWithKeepAlive(agent: HttpAgent): typeof globalThis.fetch {
+	// Use undici's own fetch — not globalThis.fetch — so the Agent dispatcher
+	// and fetch implementation share the same undici version. Mixing an external
+	// undici Agent with Node's built-in fetch causes "fetch failed" on Node >=22
+	// because the internal undici request handler interface diverges.
 	return ((input: string | URL | Request, init?: RequestInit) => {
-		return globalThis.fetch(input, {
-			...init,
-			dispatcher: agent,
-		} as unknown as RequestInit);
-	}) as typeof globalThis.fetch;
+		return undiciFetch(
+			input as Parameters<typeof undiciFetch>[0],
+			{
+				...init,
+				dispatcher: agent,
+			} as Parameters<typeof undiciFetch>[1],
+		);
+	}) as unknown as typeof globalThis.fetch;
 }
 
 /**

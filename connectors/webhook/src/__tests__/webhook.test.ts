@@ -8,6 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebhookSource } from '../source.js';
 import { WebhookTarget } from '../target.js';
 
+const { fetchMock } = vi.hoisted(() => ({
+	fetchMock: vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: 'OK' }),
+}));
+
+vi.mock('@orgloop/sdk', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@orgloop/sdk')>();
+	return {
+		...actual,
+		createFetchWithKeepAlive: () => fetchMock,
+	};
+});
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function createMockRequest(
@@ -360,11 +372,9 @@ describe('WebhookSource', () => {
 // ─── WebhookTarget ────────────────────────────────────────────────────────────
 
 describe('WebhookTarget', () => {
-	let fetchMock: ReturnType<typeof vi.fn>;
-
 	beforeEach(() => {
-		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
-		vi.stubGlobal('fetch', fetchMock);
+		fetchMock.mockClear();
+		fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
 	});
 
 	afterEach(() => {

@@ -1,5 +1,14 @@
+import { fetch as undiciFetch } from 'undici';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { closeHttpAgent, createFetchWithKeepAlive, createHttpAgent } from '../http.js';
+
+vi.mock('undici', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('undici')>();
+	return {
+		...actual,
+		fetch: vi.fn().mockResolvedValue(new Response('ok', { status: 200 })),
+	};
+});
 
 describe('createHttpAgent', () => {
 	const agents: ReturnType<typeof createHttpAgent>[] = [];
@@ -39,7 +48,7 @@ describe('createHttpAgent', () => {
 
 describe('createFetchWithKeepAlive', () => {
 	afterEach(() => {
-		vi.restoreAllMocks();
+		vi.mocked(undiciFetch).mockClear();
 	});
 
 	it('returns a function with the same signature as fetch', () => {
@@ -50,19 +59,15 @@ describe('createFetchWithKeepAlive', () => {
 		agent.close();
 	});
 
-	it('passes the dispatcher to fetch calls', async () => {
+	it('passes the dispatcher to undici fetch calls', async () => {
 		const agent = createHttpAgent();
 		const keepAliveFetch = createFetchWithKeepAlive(agent);
 
-		// Spy on globalThis.fetch to verify dispatcher is passed
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response('ok', { status: 200 }));
-
 		await keepAliveFetch('https://example.com');
 
-		expect(fetchSpy).toHaveBeenCalledOnce();
-		const [url, init] = fetchSpy.mock.calls[0];
+		const mockedFetch = vi.mocked(undiciFetch);
+		expect(mockedFetch).toHaveBeenCalledOnce();
+		const [url, init] = mockedFetch.mock.calls[0];
 		expect(url).toBe('https://example.com');
 		expect((init as Record<string, unknown>).dispatcher).toBe(agent);
 
@@ -73,17 +78,14 @@ describe('createFetchWithKeepAlive', () => {
 		const agent = createHttpAgent();
 		const keepAliveFetch = createFetchWithKeepAlive(agent);
 
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValue(new Response('ok', { status: 200 }));
-
 		await keepAliveFetch('https://example.com', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 		});
 
-		expect(fetchSpy).toHaveBeenCalledOnce();
-		const [, init] = fetchSpy.mock.calls[0];
+		const mockedFetch = vi.mocked(undiciFetch);
+		expect(mockedFetch).toHaveBeenCalledOnce();
+		const [, init] = mockedFetch.mock.calls[0];
 		const opts = init as Record<string, unknown>;
 		expect(opts.method).toBe('POST');
 		expect(opts.dispatcher).toBe(agent);
