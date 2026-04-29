@@ -14,6 +14,7 @@ import { registerAddCommand } from './commands/add.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerEnvCommand } from './commands/env.js';
 import { registerHookCommand } from './commands/hook.js';
+import { registerInboxCommand } from './commands/inbox.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerInspectCommand } from './commands/inspect.js';
 import { registerInstallServiceCommand } from './commands/install-service.js';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
 	registerEnvCommand(program);
 	registerDoctorCommand(program);
 	registerHookCommand(program);
+	registerInboxCommand(program);
 	registerPlanCommand(program);
 	registerStartCommand(program);
 	registerStopCommand(program);

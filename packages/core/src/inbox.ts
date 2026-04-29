@@ -106,6 +106,11 @@ export class InboxManager {
 		return this.store.pending(sessionKey);
 	}
 
+	/** List all session keys with pending event counts. */
+	async listKeys(): Promise<Array<{ sessionKey: string; pending: number }>> {
+		return this.store.listKeys();
+	}
+
 	/** Start periodic TTL cleanup. */
 	startCleanup(): void {
 		if (this.cleanupTimer) return;

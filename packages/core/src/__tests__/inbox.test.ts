@@ -4,7 +4,7 @@
 
 import type { OrgLoopEvent } from '@orgloop/sdk';
 import { createTestEvent, MockActor, MockSource } from '@orgloop/sdk';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryBus } from '../bus.js';
 import type { InboxConfig } from '../inbox.js';
 import { InboxManager } from '../inbox.js';
@@ -159,6 +159,40 @@ describe('InMemoryInboxStore', () => {
 		await store.enqueue('s1', makeEvent('a'), 60_000);
 		await store.close();
 		expect(await store.pending('s1')).toBe(0);
+	});
+
+	it('listKeys() returns all session keys with pending counts', async () => {
+		const store = new InMemoryInboxStore();
+		await store.enqueue('s1', makeEvent('a'), 60_000);
+		await store.enqueue('s1', makeEvent('b'), 60_000);
+		await store.enqueue('s2', makeEvent('c'), 60_000);
+
+		const keys = await store.listKeys();
+		expect(keys).toHaveLength(2);
+		expect(keys).toContainEqual({ sessionKey: 's1', pending: 2 });
+		expect(keys).toContainEqual({ sessionKey: 's2', pending: 1 });
+	});
+
+	it('listKeys() excludes expired entries', async () => {
+		const store = new InMemoryInboxStore();
+		await store.enqueue('s1', makeEvent('a'), 1); // expires immediately
+		await store.enqueue('s2', makeEvent('b'), 60_000); // stays
+
+		await new Promise((r) => setTimeout(r, 5));
+
+		const keys = await store.listKeys();
+		expect(keys).toHaveLength(1);
+		expect(keys[0].sessionKey).toBe('s2');
+	});
+
+	it('listKeys() returns empty array after drain', async () => {
+		const store = new InMemoryInboxStore();
+		await store.enqueue('s1', makeEvent('a'), 60_000);
+
+		await store.drain('s1', 100);
+
+		const keys = await store.listKeys();
+		expect(keys).toHaveLength(0);
 	});
 });
 
@@ -382,8 +416,12 @@ describe('Runtime inbox integration', () => {
 		await runtime.inject(e1, 'm');
 		await runtime.inject(e2, 'm');
 
-		// Actor should NOT receive direct delivery (events go to inbox)
-		expect(actor.delivered).toHaveLength(0);
+		// Actor should NOT receive direct delivery of original events —
+		// but DOES receive exactly one synthetic notification via onNotify
+		expect(actor.delivered).toHaveLength(1);
+		expect((actor.delivered[0].event.payload as Record<string, unknown>).kind).toBe(
+			'inbox.notification',
+		);
 
 		// Events should be drainable from inbox
 		const manager = getManager(runtime);
@@ -575,12 +613,133 @@ describe('Runtime inbox integration', () => {
 		// Direct actor receives event immediately
 		expect(directActor.delivered).toHaveLength(1);
 
-		// Inbox actor does NOT receive direct delivery
-		expect(inboxActor.delivered).toHaveLength(0);
+		// Inbox actor receives notification (not the original event)
+		expect(inboxActor.delivered).toHaveLength(1);
+		expect((inboxActor.delivered[0].event.payload as Record<string, unknown>).kind).toBe(
+			'inbox.notification',
+		);
 
 		// But inbox has the event
 		const manager = getManager(runtime);
 		const result = await manager.drain('inbox:42');
 		expect(result.events).toHaveLength(1);
+	});
+
+	it('onNotify delivers synthetic notification event to actor', async () => {
+		runtime = new Runtime({
+			bus: new InMemoryBus(),
+			inbox: {},
+		});
+		await runtime.start();
+
+		const source = new MockSource('src');
+		const actor = new MockActor('act');
+
+		const config = makeModuleConfig('m', {
+			sources: [{ id: 'src', connector: 'mock', config: {}, poll: { interval: '5m' } }],
+			actors: [{ id: 'act', connector: 'mock', config: {} }],
+			routes: [
+				{
+					name: 'inbox-route',
+					when: { source: 'src', events: ['resource.changed'] },
+					then: {
+						actor: 'act',
+						config: {
+							inbox: true,
+							session_key: 'notify-test:{{payload.issue.number}}',
+						},
+					},
+				},
+			],
+		});
+
+		await runtime.loadModule(config, {
+			sources: new Map([['src', source]]),
+			actors: new Map([['act', actor]]),
+		});
+
+		// Inject an event — this triggers onNotify which delivers to the actor
+		await runtime.inject(makeEvent('1'), 'm');
+
+		// Actor should receive the synthetic notification (not the original event)
+		expect(actor.delivered).toHaveLength(1);
+		const delivered = actor.delivered[0];
+		expect(delivered.event.type).toBe('message.received');
+		expect(delivered.event.source).toBe('orgloop');
+		expect((delivered.event.payload as Record<string, unknown>).kind).toBe('inbox.notification');
+		expect((delivered.event.payload as Record<string, unknown>).pending_count).toBe(1);
+		expect((delivered.event.payload as Record<string, unknown>).session_key).toBe('notify-test:42');
+		expect((delivered.event.payload as Record<string, unknown>).drain_command).toContain(
+			'orgloop inbox drain',
+		);
+	});
+
+	it('re-enqueue after drain triggers new notification delivery', async () => {
+		runtime = new Runtime({
+			bus: new InMemoryBus(),
+			inbox: {},
+		});
+		await runtime.start();
+
+		const source = new MockSource('src');
+		const actor = new MockActor('act');
+
+		const config = makeModuleConfig('m', {
+			sources: [{ id: 'src', connector: 'mock', config: {}, poll: { interval: '5m' } }],
+			actors: [{ id: 'act', connector: 'mock', config: {} }],
+			routes: [
+				{
+					name: 'inbox-route',
+					when: { source: 'src', events: ['resource.changed'] },
+					then: {
+						actor: 'act',
+						config: {
+							inbox: true,
+							session_key: 'renotify:{{payload.issue.number}}',
+						},
+					},
+				},
+			],
+		});
+
+		await runtime.loadModule(config, {
+			sources: new Map([['src', source]]),
+			actors: new Map([['act', actor]]),
+		});
+
+		// First event → notification delivered to actor
+		await runtime.inject(makeEvent('1'), 'm');
+		expect(actor.delivered).toHaveLength(1);
+
+		// Second event → suppressed (notification pending)
+		await runtime.inject(makeEvent('2'), 'm');
+		expect(actor.delivered).toHaveLength(1);
+
+		// Drain all events
+		const manager = getManager(runtime);
+		await manager.drain('renotify:42');
+
+		// Third event → new notification
+		await runtime.inject(makeEvent('3'), 'm');
+		expect(actor.delivered).toHaveLength(2);
+	});
+
+	it('InboxManager.listKeys() works through manager passthrough', async () => {
+		runtime = new Runtime({
+			bus: new InMemoryBus(),
+			inbox: {},
+		});
+		await runtime.start();
+
+		const manager = getManager(runtime);
+		const config: InboxConfig = { inbox: true, session_key: 's1' };
+
+		await manager.enqueue('s1', makeEvent('1'), config);
+		await manager.enqueue('s2', makeEvent('2'), { ...config, session_key: 's2' });
+
+		const keys = await manager.listKeys();
+		expect(keys).toHaveLength(2);
+		expect(keys).toContainEqual({ sessionKey: 's1', pending: 1 });
+		expect(keys).toContainEqual({ sessionKey: 's2', pending: 1 });
 	});
 });

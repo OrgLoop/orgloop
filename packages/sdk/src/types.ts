@@ -225,6 +225,7 @@ export type LogPhase =
 	| 'runtime.start'
 	| 'runtime.stop'
 	| 'audit.record'
+	| 'inbox.notify'
 	| 'audit.flag'
 	| 'audit.held'
 	| 'loop.detected'

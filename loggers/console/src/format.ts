@@ -53,6 +53,7 @@ const PHASE_STYLES: Record<LogPhase, PhaseStyle> = {
 	'audit.held': { icon: '\u26d4', color: RED }, // ⛔
 	'loop.detected': { icon: '\u26a0', color: YELLOW }, // ⚠
 	'loop.circuit_broken': { icon: '\u26d4', color: RED }, // ⛔
+	'inbox.notify': { icon: '\u2709', color: CYAN }, // ✉
 };
 
 /**
@@ -163,6 +164,7 @@ const PHASE_LEVELS: Record<LogPhase, number> = {
 	'audit.held': 3, // error
 	'loop.detected': 2, // warn
 	'loop.circuit_broken': 3, // error
+	'inbox.notify': 1, // info
 };
 
 const LEVEL_VALUES: Record<string, number> = {

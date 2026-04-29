@@ -3,6 +3,7 @@
  *
  *   GET /api/inbox/drain?session_key=<key>&limit=100  — drain pending events
  *   GET /api/inbox/status?session_key=<key>           — check pending count
+ *   GET /api/inbox/list                               — list all session keys with counts
  */
 
 import type { Runtime } from './runtime.js';
@@ -31,5 +32,10 @@ export function registerInboxApi(runtime: Runtime): void {
 			return { error: 'Missing required parameter: session_key' };
 		}
 		return { pending: await manager.pending(sessionKey) };
+	});
+
+	// GET /api/inbox/list — all session keys with pending event counts
+	server.registerApiHandler('inbox/list', async () => {
+		return { sessions: await manager.listKeys() };
 	});
 }

@@ -70,6 +70,7 @@ const PHASE_SEVERITY: Record<LogPhase, number> = {
 	'audit.held': 3, // Error
 	'loop.detected': 4, // Warning
 	'loop.circuit_broken': 3, // Error
+	'inbox.notify': 6, // Informational
 };
 
 /** Get severity for a phase, with optional fatal upgrade */

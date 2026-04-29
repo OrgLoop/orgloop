@@ -162,6 +162,15 @@ class Runtime extends EventEmitter implements RuntimeControl {
 	// Inbox manager (opt-in per route via inbox: true)
 	private readonly inboxManager: InboxManager | null;
 
+	// Delivery context per inbox session key (for notification delivery)
+	private readonly inboxDeliveryContext = new Map<
+		string,
+		{
+			actor: import('@orgloop/sdk').ActorConnector;
+			deliveryConfig: RouteDeliveryConfig;
+		}
+	>();
+
 	constructor(options?: RuntimeOptions) {
 		super();
 		this.bus = options?.bus ?? new InMemoryBus();
@@ -200,6 +209,11 @@ class Runtime extends EventEmitter implements RuntimeControl {
 
 		// Inbox manager — always created (lightweight), routes opt-in via inbox: true
 		this.inboxManager = options?.inbox !== undefined ? new InboxManager(options.inbox) : null;
+		if (this.inboxManager) {
+			this.inboxManager.onNotify = async (sessionKey, pendingCount, oldestEventAt) => {
+				await this.deliverInboxNotification(sessionKey, pendingCount, oldestEventAt);
+			};
+		}
 	}
 
 	// ─── Lifecycle ───────────────────────────────────────────────────────────
@@ -641,6 +655,47 @@ class Runtime extends EventEmitter implements RuntimeControl {
 		await this.bus.ack(event.id);
 	}
 
+	private async deliverInboxNotification(
+		sessionKey: string,
+		pendingCount: number,
+		oldestEventAt: string,
+	): Promise<void> {
+		const ctx = this.inboxDeliveryContext.get(sessionKey);
+		if (!ctx) return;
+
+		const syntheticEvent: OrgLoopEvent = {
+			id: `evt_inbox-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			source: 'orgloop',
+			type: 'message.received',
+			provenance: { platform: 'orgloop' },
+			payload: {
+				kind: 'inbox.notification',
+				pending_count: pendingCount,
+				session_key: sessionKey,
+				oldest_event_at: oldestEventAt,
+				drain_command: `orgloop inbox drain --key "${sessionKey}" --format json`,
+				instructions:
+					'Drain your inbox and process the batch. Act on the final state — skip intermediate events that have been superseded.',
+			},
+			timestamp: new Date().toISOString(),
+		};
+
+		try {
+			await ctx.actor.deliver(syntheticEvent, ctx.deliveryConfig);
+			await this.emitLog('inbox.notify', {
+				result: 'delivered',
+				metadata: { session_key: sessionKey, pending_count: pendingCount },
+			});
+		} catch (err) {
+			await this.emitLog('inbox.notify', {
+				result: 'failed',
+				error: err instanceof Error ? err.message : String(err),
+				metadata: { session_key: sessionKey, pending_count: pendingCount },
+			});
+			throw err;
+		}
+	}
+
 	private async deliverToActor(
 		event: OrgLoopEvent,
 		routeName: string,
@@ -686,6 +741,14 @@ class Runtime extends EventEmitter implements RuntimeControl {
 				};
 
 				try {
+					// Store delivery context BEFORE enqueue — onNotify fires during enqueue
+					if (!this.inboxDeliveryContext.has(sessionKey)) {
+						this.inboxDeliveryContext.set(sessionKey, {
+							actor,
+							deliveryConfig: { ...deliveryConfig, session_key: sessionKey },
+						});
+					}
+
 					await this.inboxManager.enqueue(sessionKey, event, inboxConfig);
 					deliveryStatus = 'delivered';
 					await this.emitLog('deliver.success', {

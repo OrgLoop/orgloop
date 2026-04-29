@@ -39,6 +39,9 @@ export interface InboxStore {
 	/** Remove entries past their TTL. Returns count expired. */
 	expireStale(): Promise<number>;
 
+	/** List all session keys with pending event counts. */
+	listKeys(): Promise<Array<{ sessionKey: string; pending: number }>>;
+
 	/** Cleanup resources. */
 	close(): Promise<void>;
 }
@@ -154,5 +157,15 @@ export class InMemoryInboxStore implements InboxStore {
 	async close(): Promise<void> {
 		this.entries.clear();
 		this.locks.clear();
+	}
+
+	async listKeys(): Promise<Array<{ sessionKey: string; pending: number }>> {
+		const now = Date.now();
+		const result: Array<{ sessionKey: string; pending: number }> = [];
+		for (const [key, queue] of this.entries) {
+			const pending = queue.filter((e) => e.ttlExpiresAt > now).length;
+			if (pending > 0) result.push({ sessionKey: key, pending });
+		}
+		return result;
 	}
 }
