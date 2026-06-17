@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-docker",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop Docker connector — control Docker containers and Kind clusters",
   "type": "module",
   "main": "dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-agent-ctl",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop agent-ctl connector — poll for AI agent session lifecycle events",
   "type": "module",
   "main": "dist/index.js",
