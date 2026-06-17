@@ -45,6 +45,23 @@ export interface GitHubWebhookConfig {
 	repo_owner?: string;
 	/** GitHub repo name (e.g. "mono") for PR lookups */
 	repo_name?: string;
+	/**
+	 * Debounce window in milliseconds for `issue_comment.edited` events.
+	 *
+	 * Bots like Claude Code create a placeholder comment and then edit it
+	 * many times (ticking checkboxes, appending findings) before the review
+	 * is finalized. Without debouncing, only the first intermediate edit
+	 * would survive the dedup window, and downstream hooks would act on
+	 * incomplete content.
+	 *
+	 * When set (default 120 000 ms = 2 min), each incoming edit resets a
+	 * per-comment timer.  The event is only persisted (for the next poll
+	 * cycle) once no further edits arrive within the window, ensuring
+	 * downstream sees the **final** state.
+	 *
+	 * Set to `0` to disable debouncing and emit every edit immediately.
+	 */
+	issue_comment_edit_debounce_ms?: number;
 }
 
 /** Resolve env var references like ${WEBHOOK_SECRET} */
@@ -60,6 +77,9 @@ function resolveEnvVar(value: string): string {
 	return value;
 }
 
+/** Default debounce window for issue_comment.edited events (2 minutes). */
+const DEFAULT_EDIT_DEBOUNCE_MS = 120_000;
+
 export class GitHubWebhookSource implements SourceConnector {
 	readonly id = 'github-webhook';
 	private secret?: string;
@@ -70,6 +90,20 @@ export class GitHubWebhookSource implements SourceConnector {
 	private githubToken?: string;
 	private repoOwner?: string;
 	private repoName?: string;
+
+	/** Debounce window for issue_comment edited events (ms). 0 = disabled. */
+	private editDebounceMs = DEFAULT_EDIT_DEBOUNCE_MS;
+
+	/**
+	 * Pending debounced edits keyed by comment id.
+	 * Each entry holds the latest normalized event and a timer handle;
+	 * the timer fires after `editDebounceMs` of silence, at which point
+	 * the event is persisted for the next poll drain.
+	 */
+	private editDebounceMap = new Map<
+		string,
+		{ event: OrgLoopEvent; timer: ReturnType<typeof setTimeout> }
+	>();
 
 	async init(config: SourceConfig): Promise<void> {
 		this.sourceId = config.id;
@@ -92,6 +126,8 @@ export class GitHubWebhookSource implements SourceConnector {
 		if (cfg.repo_name) {
 			this.repoName = resolveEnvVar(cfg.repo_name);
 		}
+
+		this.editDebounceMs = cfg.issue_comment_edit_debounce_ms ?? DEFAULT_EDIT_DEBOUNCE_MS;
 
 		if (cfg.buffer_dir) {
 			const dir = resolveEnvVar(cfg.buffer_dir);
@@ -187,6 +223,12 @@ export class GitHubWebhookSource implements SourceConnector {
 
 	async shutdown(): Promise<void> {
 		this.pendingEvents = [];
+		// Flush all pending debounced edits immediately so they are not lost.
+		for (const [_commentId, pending] of this.editDebounceMap) {
+			clearTimeout(pending.timer);
+			this.persistEvent(pending.event);
+		}
+		this.editDebounceMap.clear();
 	}
 
 	/**
@@ -222,7 +264,17 @@ export class GitHubWebhookSource implements SourceConnector {
 				const comment = payload.comment as Record<string, unknown>;
 				const issue = payload.issue as Record<string, unknown>;
 				if (!comment || !issue) return [];
-				return [normalizeIssueComment(this.sourceId, comment, issue, repo)];
+
+				if (action === 'edited') {
+					const event = normalizeIssueComment(this.sourceId, comment, issue, repo, 'edited');
+					this.debounceEditedComment(String(comment.id), event);
+					// Return empty — the event will be persisted after the
+					// debounce window elapses (picked up by the next poll).
+					return [];
+				}
+
+				// 'created' (and 'deleted', if it ever matters) — immediate
+				return [normalizeIssueComment(this.sourceId, comment, issue, repo, action ?? undefined)];
 			}
 
 			case 'pull_request': {
@@ -401,6 +453,44 @@ export class GitHubWebhookSource implements SourceConnector {
 				payload,
 			}),
 		];
+	}
+
+	// ─── Debounce for issue_comment.edited ──────────────────────────────
+
+	/**
+	 * Schedule (or reschedule) a debounced persist for an edited comment.
+	 *
+	 * Each call resets the timer for the given `commentId`.  When the timer
+	 * fires without further resets, the latest event snapshot is persisted
+	 * and will be drained by the next `poll()` call.
+	 *
+	 * If debouncing is disabled (`editDebounceMs === 0`), the event is
+	 * persisted immediately.
+	 */
+	private debounceEditedComment(commentId: string, event: OrgLoopEvent): void {
+		if (this.editDebounceMs <= 0) {
+			// Debounce disabled — persist immediately.
+			this.persistEvent(event);
+			return;
+		}
+
+		const existing = this.editDebounceMap.get(commentId);
+		if (existing) {
+			clearTimeout(existing.timer);
+		}
+
+		const timer = setTimeout(() => {
+			this.editDebounceMap.delete(commentId);
+			this.persistEvent(event);
+		}, this.editDebounceMs);
+
+		// Prevent the timer from keeping the process alive if orgloop is
+		// shutting down (Node.js `unref`).
+		if (typeof timer === 'object' && 'unref' in timer) {
+			timer.unref();
+		}
+
+		this.editDebounceMap.set(commentId, { event, timer });
 	}
 
 	private persistEvent(event: OrgLoopEvent): void {

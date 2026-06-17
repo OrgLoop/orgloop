@@ -104,21 +104,43 @@ export function normalizePullRequestReviewComment(
 	});
 }
 
-/** Normalize an issue comment on a PR */
+/**
+ * Normalize an issue comment on a PR.
+ *
+ * @param action - The webhook action that triggered this event (`created`,
+ *   `edited`, `deleted`). When omitted, defaults to `'created'` for backward
+ *   compatibility.
+ *
+ *   `platform_event` is set to `'issue_comment'` for `created` (preserving
+ *   the pre-existing value so downstream routes that filter on
+ *   `issue_comment` keep working) and `'issue_comment.<action>'` for
+ *   everything else.
+ */
 export function normalizeIssueComment(
 	sourceId: string,
 	comment: Record<string, unknown>,
 	issue: Record<string, unknown>,
 	repo: Record<string, unknown>,
+	action?: string,
 ): OrgLoopEvent {
+	const resolvedAction = action ?? 'created';
+	// Backward-compat: created events keep the legacy `issue_comment`
+	// platform_event so existing routes are not broken.
+	const platformEvent =
+		resolvedAction === 'created' ? 'issue_comment' : `issue_comment.${resolvedAction}`;
+	const resourceId =
+		resolvedAction === 'created'
+			? `issue-comment-${comment.id}`
+			: `issue-comment-${comment.id}-${resolvedAction}`;
+
 	const user = comment.user as Record<string, unknown> | undefined;
 	return buildEvent({
 		source: sourceId,
 		type: 'resource.changed',
 		provenance: {
 			platform: 'github',
-			platform_event: 'issue_comment',
-			resource_id: `issue-comment-${comment.id}`,
+			platform_event: platformEvent,
+			resource_id: resourceId,
 			author: (user?.login as string) ?? 'unknown',
 			author_type: detectAuthorType(
 				(user?.login as string) ?? '',
@@ -133,7 +155,7 @@ export function normalizeIssueComment(
 			url: (comment.html_url as string) ?? '',
 		},
 		payload: {
-			action: 'issue_comment',
+			action: platformEvent,
 			comment_body: comment.body,
 			issue_title: issue.title,
 			issue_number: issue.number,

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubWebhookSource } from '../source.js';
 
 const TEST_SECRET = 'test-github-webhook-secret';
@@ -465,7 +465,7 @@ describe('GitHubWebhookSource', () => {
 			});
 		});
 
-		it('normalizes issue comment', async () => {
+		it('normalizes issue comment (created)', async () => {
 			const handler = source.webhook();
 			const body = JSON.stringify({
 				action: 'created',
@@ -483,6 +483,181 @@ describe('GitHubWebhookSource', () => {
 			expect(events[0].provenance.platform_event).toBe('issue_comment');
 			expect(events[0].payload.comment_body).toBe('I agree with the approach');
 			expect(events[0].payload.issue_number).toBe(10);
+		});
+	});
+
+	// ─── issue_comment.edited debounce ──────────────────────────────────
+	//
+	// These tests use `normalizeWebhookPayload` directly to avoid the
+	// `createMockRequest` helper (which uses `setTimeout(0)` to deliver
+	// the body — trapped by fake timers, causing hangs).
+
+	describe('issue_comment.edited debounce', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('does not emit edited events immediately (they are debounced)', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: {},
+			});
+
+			const events = await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: sampleIssueComment,
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// normalizeWebhookPayload returns empty for debounced edits
+			expect(events).toHaveLength(0);
+
+			// Poll before debounce fires — still empty
+			const poll1 = await source.poll(null);
+			expect(poll1.events).toHaveLength(0);
+		});
+
+		it('persists the edited event after the debounce window', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: { issue_comment_edit_debounce_ms: 500 },
+			});
+
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: { ...sampleIssueComment, body: 'Final review text' },
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// Advance past debounce window
+			vi.advanceTimersByTime(600);
+
+			const poll = await source.poll(null);
+			expect(poll.events).toHaveLength(1);
+			expect(poll.events[0].provenance.platform_event).toBe('issue_comment.edited');
+			expect(poll.events[0].payload.comment_body).toBe('Final review text');
+		});
+
+		it('replaces intermediate edits and only persists the latest', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: { issue_comment_edit_debounce_ms: 1000 },
+			});
+
+			// First edit (intermediate — placeholder still present)
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: { ...sampleIssueComment, body: 'Reviewing… ☑ Analysis ☐ Security' },
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// Advance part-way (not past window)
+			vi.advanceTimersByTime(500);
+
+			// Second edit (final review)
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: {
+					...sampleIssueComment,
+					body: '🔴 Critical: SQL injection in query builder',
+				},
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// Advance past debounce window from the SECOND edit
+			vi.advanceTimersByTime(1100);
+
+			const poll = await source.poll(null);
+			// Only one event — the final review, not the intermediate
+			expect(poll.events).toHaveLength(1);
+			expect(poll.events[0].payload.comment_body).toBe(
+				'🔴 Critical: SQL injection in query builder',
+			);
+		});
+
+		it('debounces independently per comment id', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: { issue_comment_edit_debounce_ms: 500 },
+			});
+
+			// Edit comment 301
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: { ...sampleIssueComment, id: 301, body: 'Review A' },
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// Edit comment 999 (different comment)
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: { ...sampleIssueComment, id: 999, body: 'Review B' },
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			vi.advanceTimersByTime(600);
+
+			const poll = await source.poll(null);
+			expect(poll.events).toHaveLength(2);
+			const bodies = poll.events.map((e) => e.payload.comment_body).sort();
+			expect(bodies).toEqual(['Review A', 'Review B']);
+		});
+
+		it('emits edited events immediately when debounce is disabled (0)', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: { issue_comment_edit_debounce_ms: 0 },
+			});
+
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: sampleIssueComment,
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// With debounce=0 the event goes directly to the pending buffer.
+			const poll = await source.poll(null);
+			expect(poll.events).toHaveLength(1);
+			expect(poll.events[0].provenance.platform_event).toBe('issue_comment.edited');
+		});
+
+		it('flushes pending debounced events on shutdown', async () => {
+			await source.init({
+				id: 'gh-webhook',
+				connector: '@orgloop/connector-github-webhook',
+				config: { issue_comment_edit_debounce_ms: 60000 },
+			});
+
+			await source.normalizeWebhookPayload('issue_comment', {
+				action: 'edited',
+				comment: sampleIssueComment,
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+
+			// Shutdown before debounce fires
+			await source.shutdown();
+
+			// The shutdown flushes the debounced event to pendingEvents
+			// and then clears pendingEvents. For in-memory mode the
+			// event is lost; for buffer_dir mode it survives.
+			// This test validates the timer cleanup happens without error.
 		});
 	});
 

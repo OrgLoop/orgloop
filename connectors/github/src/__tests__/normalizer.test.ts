@@ -122,6 +122,36 @@ describe('normalizeIssueComment provenance', () => {
 		const event = normalizeIssueComment('gh', comment, issue, repo);
 		expect(event.provenance.pr_merged).toBe(false);
 	});
+
+	// ─── action parameter (issue_comment.edited blind spot fix) ──────
+
+	it('defaults to platform_event "issue_comment" when action is omitted', () => {
+		const event = normalizeIssueComment('gh', comment, makeIssue(), repo);
+		expect(event.provenance.platform_event).toBe('issue_comment');
+		expect(event.payload.action).toBe('issue_comment');
+		expect(event.provenance.resource_id).toBe('issue-comment-3');
+	});
+
+	it('uses legacy platform_event for explicit "created" action', () => {
+		const event = normalizeIssueComment('gh', comment, makeIssue(), repo, 'created');
+		expect(event.provenance.platform_event).toBe('issue_comment');
+		expect(event.payload.action).toBe('issue_comment');
+		expect(event.provenance.resource_id).toBe('issue-comment-3');
+	});
+
+	it('uses action-qualified platform_event for "edited"', () => {
+		const event = normalizeIssueComment('gh', comment, makeIssue(), repo, 'edited');
+		expect(event.provenance.platform_event).toBe('issue_comment.edited');
+		expect(event.payload.action).toBe('issue_comment.edited');
+		expect(event.provenance.resource_id).toBe('issue-comment-3-edited');
+	});
+
+	it('uses action-qualified platform_event for "deleted"', () => {
+		const event = normalizeIssueComment('gh', comment, makeIssue(), repo, 'deleted');
+		expect(event.provenance.platform_event).toBe('issue_comment.deleted');
+		expect(event.payload.action).toBe('issue_comment.deleted');
+		expect(event.provenance.resource_id).toBe('issue-comment-3-deleted');
+	});
 });
 
 describe('normalizePullRequestClosed provenance', () => {
