@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-webhook",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop generic webhook connector — inbound and outbound",
   "type": "module",
   "main": "dist/index.js",

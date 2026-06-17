@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-coding-agent",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop coding agent connector — harness-agnostic hook-based session lifecycle events",
   "type": "module",
   "main": "dist/index.js",

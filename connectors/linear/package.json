@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-linear",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop Linear connector — poll for ticket state changes",
   "type": "module",
   "main": "dist/index.js",

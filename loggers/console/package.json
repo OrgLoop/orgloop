@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/logger-console",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop console logger — colored human-readable output",
   "type": "module",
   "main": "dist/index.js",

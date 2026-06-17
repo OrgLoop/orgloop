@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-cron",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop cron connector — emit events on time-based schedules",
   "type": "module",
   "main": "dist/index.js",

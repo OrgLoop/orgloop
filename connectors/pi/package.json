@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-pi",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop Pi connector — hook-based session lifecycle notifications",
   "type": "module",
   "main": "dist/index.js",

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-06-17
+
+Handle issue_comment.edited events with debounce so finalized in-place-edited PR reviews (e.g. Claude Code) reach consumers, not just the placeholder create (#107).
+
+
 ## [0.7.8] - 2026-03-28
 
 Webhook buffer streaming reads + size cap (fixes #158)

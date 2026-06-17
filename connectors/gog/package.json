@@ -1,6 +1,6 @@
 {
   "name": "@orgloop/connector-gog",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OrgLoop GOG (Gmail) connector — poll for new emails and label changes via gog CLI",
   "type": "module",
   "main": "dist/index.js",
