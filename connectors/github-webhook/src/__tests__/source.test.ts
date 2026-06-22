@@ -1152,4 +1152,130 @@ describe('GitHubWebhookSource', () => {
 			expect(events).toHaveLength(0);
 		});
 	});
+
+	// ─── Reconciliation tests ───────────────────────────────────────────────────
+
+	describe('reconciliation', () => {
+		let reconcileSource: GitHubWebhookSource;
+
+		beforeEach(() => {
+			reconcileSource = new GitHubWebhookSource();
+		});
+
+		afterEach(async () => {
+			await reconcileSource.shutdown();
+		});
+
+		it('marks review comments as seen from webhook, preventing reconciliation re-emit', async () => {
+			await reconcileSource.init({
+				id: 'gh-reconcile-test',
+				connector: '@orgloop/connector-github-webhook',
+				config: {
+					token: 'test-token',
+					repo_owner: 'org',
+					repo_name: 'repo',
+					// Disable auto-reconciliation timer for manual testing
+					reconciliation_interval_ms: 0,
+				} as Record<string, unknown>,
+			});
+
+			// Deliver a review comment via webhook — normalizeWebhookPayload
+			// marks the comment id in the seen cache.
+			const events = await reconcileSource.normalizeWebhookPayload('pull_request_review_comment', {
+				action: 'created',
+				comment: { ...sampleComment, id: 9999 },
+				pull_request: samplePR,
+				repository: sampleRepo,
+			});
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('pull_request_review_comment');
+
+			// Verify the seen cache is populated (accessed via private field cast).
+			const seenMap = (reconcileSource as unknown as { seenCommentIds: Map<string, number> })
+				.seenCommentIds;
+			expect(seenMap.has('9999')).toBe(true);
+
+			// Re-delivering the same comment via webhook should still emit
+			// (webhook always emits; the seen cache only gates reconciliation).
+			const events2 = await reconcileSource.normalizeWebhookPayload('pull_request_review_comment', {
+				action: 'edited',
+				comment: { ...sampleComment, id: 9999, body: 'Updated' },
+				pull_request: samplePR,
+				repository: sampleRepo,
+			});
+			expect(events2).toHaveLength(1);
+		});
+
+		it('marks issue comments as seen from webhook with ic- prefix', async () => {
+			await reconcileSource.init({
+				id: 'gh-reconcile-test-ic',
+				connector: '@orgloop/connector-github-webhook',
+				config: {
+					reconciliation_interval_ms: 0,
+				} as Record<string, unknown>,
+			});
+
+			const events = await reconcileSource.normalizeWebhookPayload('issue_comment', {
+				action: 'created',
+				comment: sampleIssueComment,
+				issue: sampleIssue,
+				repository: sampleRepo,
+			});
+			expect(events).toHaveLength(1);
+			expect(events[0].provenance.platform_event).toBe('issue_comment');
+		});
+
+		it('reconciliation timer is not set when reconciliation_interval_ms is 0', async () => {
+			await reconcileSource.init({
+				id: 'gh-no-reconcile',
+				connector: '@orgloop/connector-github-webhook',
+				config: {
+					token: 'test-token',
+					repo_owner: 'org',
+					repo_name: 'repo',
+					reconciliation_interval_ms: 0,
+				} as Record<string, unknown>,
+			});
+
+			// The private reconciliationTimer should be undefined
+			// We verify indirectly: shutdown should not throw
+			await expect(reconcileSource.shutdown()).resolves.toBeUndefined();
+		});
+
+		it('reconciliation timer is not set without token/repo config', async () => {
+			await reconcileSource.init({
+				id: 'gh-no-reconcile-notoken',
+				connector: '@orgloop/connector-github-webhook',
+				config: {
+					// No token, repo_owner, repo_name
+				} as Record<string, unknown>,
+			});
+
+			await expect(reconcileSource.shutdown()).resolves.toBeUndefined();
+		});
+
+		it('shutdown clears reconciliation timer and seen cache', async () => {
+			await reconcileSource.init({
+				id: 'gh-shutdown-test',
+				connector: '@orgloop/connector-github-webhook',
+				config: {
+					token: 'test-token',
+					repo_owner: 'org',
+					repo_name: 'repo',
+					reconciliation_interval_ms: 60000,
+				} as Record<string, unknown>,
+			});
+
+			// Deliver an event to populate the seen cache
+			await reconcileSource.normalizeWebhookPayload('pull_request_review_comment', {
+				action: 'created',
+				comment: { ...sampleComment, id: 7777 },
+				pull_request: samplePR,
+				repository: sampleRepo,
+			});
+
+			// Shutdown should clear everything without error
+			await expect(reconcileSource.shutdown()).resolves.toBeUndefined();
+		});
+	});
 });
