@@ -35,6 +35,19 @@ export interface InboxManagerOptions {
 	defaultMaxBatch?: number;
 	/** Stale entry cleanup interval (default: "5m") */
 	cleanupInterval?: string;
+	/**
+	 * Re-notify interval (default: "2m").
+	 *
+	 * A notification can be lost downstream after delivery reports success
+	 * (e.g. the receiving agent runtime drops the wake because the target
+	 * session is mid-run — observed as OpenClaw `CronSessionLifecycleClaimError`,
+	 * incident 2026-07-17). Without recovery, the `notificationPending` flag
+	 * stays set forever and every subsequent event for that session key is
+	 * enqueued silently until the events expire. If a notification has been
+	 * pending for longer than this interval without a drain, the manager
+	 * re-sends it (on next enqueue and from the periodic maintenance sweep).
+	 */
+	renotifyInterval?: string;
 }
 
 // ─── InboxManager ────────────────────────────────────────────────────────────
@@ -44,9 +57,13 @@ export class InboxManager {
 	private readonly defaultTtlMs: number;
 	private readonly defaultMaxBatch: number;
 	private readonly cleanupIntervalMs: number;
+	private readonly renotifyMs: number;
 
 	/** Tracks whether a notification is in-flight for a session key. */
 	private readonly notificationPending = new Map<string, boolean>();
+
+	/** Epoch ms of the last notification sent per session key. */
+	private readonly lastNotifyAt = new Map<string, number>();
 
 	/** Cleanup timer handle. */
 	private cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -64,19 +81,22 @@ export class InboxManager {
 		this.defaultTtlMs = parseDuration(options?.defaultTtl ?? '1h');
 		this.defaultMaxBatch = options?.defaultMaxBatch ?? 100;
 		this.cleanupIntervalMs = parseDuration(options?.cleanupInterval ?? '5m');
+		this.renotifyMs = parseDuration(options?.renotifyInterval ?? '2m');
 	}
 
 	/**
 	 * Enqueue an event for a session key. Sends a notification if one isn't
-	 * already pending.
+	 * already pending, or re-sends a stale pending notification (lost-wake
+	 * recovery — see `renotifyInterval`).
 	 */
 	async enqueue(sessionKey: string, event: OrgLoopEvent, config: InboxConfig): Promise<void> {
 		const ttlMs = config.inbox_ttl ? parseDuration(config.inbox_ttl) : this.defaultTtlMs;
 
 		await this.store.enqueue(sessionKey, event, ttlMs);
 
-		// If no notification is pending, send one
-		if (!this.notificationPending.get(sessionKey)) {
+		// If no notification is pending — or the pending one has gone stale
+		// without a drain (the wake was lost downstream) — send one.
+		if (!this.notificationPending.get(sessionKey) || this.isNotificationStale(sessionKey)) {
 			await this.sendNotification(sessionKey);
 		}
 	}
@@ -91,6 +111,7 @@ export class InboxManager {
 
 		// Clear notification flag
 		this.notificationPending.set(sessionKey, false);
+		this.lastNotifyAt.delete(sessionKey);
 
 		// Check if new events arrived during drain — if so, re-notify
 		const stillPending = await this.store.pending(sessionKey);
@@ -111,15 +132,37 @@ export class InboxManager {
 		return this.store.listKeys();
 	}
 
-	/** Start periodic TTL cleanup. */
+	/**
+	 * Start periodic maintenance: TTL cleanup + lost-wake recovery sweep.
+	 *
+	 * The sweep re-notifies any session key that still has pending events but
+	 * whose notification is stale (or missing). This bounds the recovery time
+	 * for a lost wake even when no further events arrive for that key.
+	 */
 	startCleanup(): void {
 		if (this.cleanupTimer) return;
 		this.cleanupTimer = setInterval(() => {
-			void this.store.expireStale();
+			void this.runMaintenance();
 		}, this.cleanupIntervalMs);
 		// Unref so it doesn't prevent Node.js from exiting
 		if (this.cleanupTimer.unref) {
 			this.cleanupTimer.unref();
+		}
+	}
+
+	/** One maintenance pass: expire stale entries, then recover lost wakes. */
+	async runMaintenance(): Promise<void> {
+		try {
+			await this.store.expireStale();
+			const keys = await this.store.listKeys();
+			for (const { sessionKey, pending } of keys) {
+				if (pending <= 0) continue;
+				if (!this.notificationPending.get(sessionKey) || this.isNotificationStale(sessionKey)) {
+					await this.sendNotification(sessionKey);
+				}
+			}
+		} catch {
+			// Maintenance must never throw — next tick retries.
 		}
 	}
 
@@ -137,6 +180,13 @@ export class InboxManager {
 		await this.store.close();
 	}
 
+	/** True when a pending notification is older than the re-notify interval. */
+	private isNotificationStale(sessionKey: string): boolean {
+		const sentAt = this.lastNotifyAt.get(sessionKey);
+		if (sentAt === undefined) return true;
+		return Date.now() - sentAt >= this.renotifyMs;
+	}
+
 	private async sendNotification(sessionKey: string): Promise<void> {
 		if (!this.onNotify) return;
 
@@ -144,6 +194,7 @@ export class InboxManager {
 		if (pendingCount === 0) return;
 
 		this.notificationPending.set(sessionKey, true);
+		this.lastNotifyAt.set(sessionKey, Date.now());
 
 		try {
 			await this.onNotify(sessionKey, pendingCount, new Date().toISOString());
@@ -151,6 +202,7 @@ export class InboxManager {
 			// Notification failure is non-fatal — the drain endpoint still works.
 			// Clear the flag so next enqueue retries the notification.
 			this.notificationPending.set(sessionKey, false);
+			this.lastNotifyAt.delete(sessionKey);
 		}
 	}
 }

@@ -232,6 +232,11 @@ class Runtime extends EventEmitter implements RuntimeControl {
 		this.running = true;
 		this.startedAt = Date.now();
 
+		// Start inbox maintenance (TTL expiry + lost-wake re-notify sweep)
+		if (this.inboxManager) {
+			this.inboxManager.startCleanup();
+		}
+
 		// Start health heartbeat
 		if (this.enableHeartbeat) {
 			this.startHeartbeat();

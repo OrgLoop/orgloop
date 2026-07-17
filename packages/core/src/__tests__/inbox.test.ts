@@ -218,6 +218,87 @@ describe('InboxManager', () => {
 		await manager.close();
 	});
 
+	it('re-notifies on enqueue when the pending notification has gone stale (lost wake)', async () => {
+		const notifications: Array<{ key: string; count: number }> = [];
+		const manager = new InboxManager({ defaultTtl: '1h', renotifyInterval: '1ms' });
+		manager.onNotify = async (key, count) => {
+			notifications.push({ key, count });
+		};
+
+		const config: InboxConfig = { inbox: true, session_key: 'sess-lost' };
+		await manager.enqueue('sess-lost', makeEvent('1'), config);
+		expect(notifications).toHaveLength(1);
+
+		// Simulate the downstream wake being lost: no drain ever happens.
+		// After the renotify interval elapses, a new enqueue must re-notify
+		// instead of accumulating silently forever.
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		await manager.enqueue('sess-lost', makeEvent('2'), config);
+
+		expect(notifications).toHaveLength(2);
+		expect(notifications[1].count).toBe(2);
+
+		await manager.close();
+	});
+
+	it('suppresses re-notify on enqueue while the pending notification is fresh', async () => {
+		const notifications: string[] = [];
+		const manager = new InboxManager({ defaultTtl: '1h', renotifyInterval: '10m' });
+		manager.onNotify = async (key) => {
+			notifications.push(key);
+		};
+
+		const config: InboxConfig = { inbox: true, session_key: 'sess-fresh' };
+		await manager.enqueue('sess-fresh', makeEvent('1'), config);
+		await manager.enqueue('sess-fresh', makeEvent('2'), config);
+
+		expect(notifications).toHaveLength(1);
+
+		await manager.close();
+	});
+
+	it('maintenance sweep re-notifies stuck keys even without new enqueues', async () => {
+		const notifications: Array<{ key: string; count: number }> = [];
+		const manager = new InboxManager({ defaultTtl: '1h', renotifyInterval: '1ms' });
+		manager.onNotify = async (key, count) => {
+			notifications.push({ key, count });
+		};
+
+		const config: InboxConfig = { inbox: true, session_key: 'sess-sweep' };
+		await manager.enqueue('sess-sweep', makeEvent('1'), config);
+		expect(notifications).toHaveLength(1);
+
+		// Wake lost, no further events arrive. The periodic maintenance pass
+		// must recover the key on its own.
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		await manager.runMaintenance();
+
+		expect(notifications).toHaveLength(2);
+		expect(notifications[1].key).toBe('sess-sweep');
+
+		await manager.close();
+	});
+
+	it('maintenance sweep does not notify keys with no pending events', async () => {
+		const notifications: string[] = [];
+		const manager = new InboxManager({ defaultTtl: '1h', renotifyInterval: '1ms' });
+		manager.onNotify = async (key) => {
+			notifications.push(key);
+		};
+
+		const config: InboxConfig = { inbox: true, session_key: 'sess-empty' };
+		await manager.enqueue('sess-empty', makeEvent('1'), config);
+		await manager.drain('sess-empty');
+		notifications.length = 0;
+
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		await manager.runMaintenance();
+
+		expect(notifications).toHaveLength(0);
+
+		await manager.close();
+	});
+
 	it('re-notifies after drain if new events arrived', async () => {
 		const notifications: Array<{ key: string; count: number }> = [];
 		const manager = new InboxManager({ defaultTtl: '1h' });
