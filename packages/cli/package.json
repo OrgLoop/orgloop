@@ -50,7 +50,7 @@
     "@orgloop/transform-dedup": "workspace:*",
     "@orgloop/transform-enrich": "workspace:*",
     "@orgloop/transform-filter": "workspace:*",
-    "@types/inquirer": "^9.0.7"
+    "@types/inquirer": "^9.0.10"
   },
   "files": [
     "dist"
